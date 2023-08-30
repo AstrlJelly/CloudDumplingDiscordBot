@@ -1,0 +1,20 @@
+{
+  "dependencies": {
+    "@discordjs/core": "^1.0.1",
+    "discord.js": "^14.13.0",
+    "dotenv": "^16.3.1"
+  },
+  "name": "clouddumplingdiscordbot",
+  "description": "im gonna try making a discord bot for counting/chain channels",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "&test"
+  },
+  "author": "",
+  "license": "ISC",
+  "keywords": [],
+  "devDependencies": {
+    "eslint": "^8.48.0"
+  }
+}
