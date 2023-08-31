@@ -2,8 +2,7 @@
 const { Client, Events, GatewayIntentBits, GuildChannel, Emoji } = require('discord.js');
 const { token } = require('./config.json');
 const { wordsToNumbers } = require('words-to-numbers');
-const { evaluate, boolean } = require('mathjs');
-const { count } = require('console');
+const { evaluate } = require('mathjs');
 
 // Create a new client instance
 const client = new Client({
@@ -24,8 +23,8 @@ class Person {
 }
 
 class Command {
-    constructor(type, commandName, desc, func, params = [], limitedTo = []) {
-        this.type = type;
+    constructor(genre, commandName, desc, func, params = [], limitedTo = []) {
+        this.genre = genre;
         this.commandName = commandName;
         this.desc = desc;
         this.func = func;
@@ -35,39 +34,120 @@ class Command {
 }
 
 class Param {
-    constructor(paramName, desc, type, preset = null) {
+    constructor(paramName, desc, preset) {
         this.paramName = paramName;
         this.desc = desc;
-        this.type = type;
         this.preset = preset;
     }
 }
 
+
+
+class SaveData {
+    constructor(currentNumber, prevNumber, highestNumber, lastCounter, currentChain, chainAmount, prevChain, lastChainer, countingChannel, chainChannel) {
+        // counting stuff
+        this.currentNumber = currentNumber;
+        this.prevNumber = prevNumber;
+        this.highestNumber = highestNumber;
+        this.lastCounter = lastCounter;
+        // chain stuff
+        this.currentChain = currentChain;
+        this.chainAmount = chainAmount;
+        this.prevChain = prevChain;
+        this.lastChainer = lastChainer;
+        // channel persistence
+        this.countingChannel = countingChannel;
+        this.chainChannel = chainChannel;
+    }
+}
+
+var saveData;
+
+function save() {
+    saveData = new SaveData(
+        currentNumber,
+        prevNumber,
+        highestNumber,
+        lastCounter,
+        currentChain,
+        chainAmount,
+        prevChain,
+        lastChainer,
+        countingChannel,
+        chainChannel,
+    )
+    fs.writeFileSync('./save-data.json', JSON.stringify(saveData));
+}
+
+function paramFunc(content, param) 
+{
+    let type = typeof param.preset;
+    switch (type.toLowerCase())
+    {
+        case "string":
+            return String(content);
+        case "number":
+            return Number(content);
+        case "boolean":
+            return content.toLowerCase() == "true" ? true : false;
+        default:
+            throw "Unsupported type";
+    }
+}
+
+function everythingAfter(content)
+{
+    return content.substring(content.indexOf(' '));
+}
+
+function noPingReply(message, reply)
+{
+    message.reply({ 
+        content: reply, 
+        allowedMentions: { repliedUser: false }
+    })
+}
+
 const commands = [
+    //help
     new Command("bot", "help", "lists all commands", function(message) {
         let response = message.author.toString() + "\n";
-        if (this.params[0])
-        for (let i = 0; i < commands.length; i++) {
-            let element = commands[i];
-            response += `$${element.commandName} : ${element.desc} \n`;
+        let content = message.content.split(' ')[1];
+        
+        let whichCommand = paramFunc(content, this.params[0]);
+        console.log(message.content.split(' ')[1]);
+        if (message.content.split(' ')[1] === undefined) {
+            for (let i = 0; i < commands.length; i++) {
+                let element = commands[i];
+                response += `$${element.commandName} : ${element.desc} \n`;
+                if (element.params.count !== undefined) {
+                    response += `$${element.commandName} : ${element.desc} \n`;
+                }
+            }
+        } else {
+            message.react('✅');
+            let command = commands.find(x => x.commandName === whichCommand);
+            response = `$${command.commandName} : ${command.desc}`;
         }
-        message.reply(response);
-    }, [new Param("whichCommand", "", typeof(String))], []),
+        noPingReply(message, response);
+    }, [new Param("whichCommand", "", "")], []),
 
+    //eval
     new Command("fun", "eval", "does the math put in front of it", function(message) {
         var eval = '';
         try {
-            eval = evaluate(message.content.substring(6, message.content.length));
+            eval = evaluate(everythingAfter(message.content));
         } catch (error) {
             eval = error;
         }
-        message.reply(String(eval));
+        noPingReply(message, String(eval));
     }, [], [ "438296397452935169" ]),
     
+    //echo
     new Command("fun", "echo", "echoes whatever's in front of it", function(message) {
         let reply = "something broke";
         try {
-            reply = message.content.split(this.commandName.length + 2);
+            reply = everythingAfter(message.content);
         } catch (error) {
             reply = error;
         } finally {
@@ -75,40 +155,37 @@ const commands = [
         }
     }, [], [ "438296397452935169" ]),
     
+    //countHere
     new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", function(message) {
         if (countingChannel = message.channel.id) {
             countingChannel = "";
-            message.reply('counting in this channel has ceased.');
+            message.channel.send('counting in this channel has ceased.');
         } else {
             countingChannel = message.channel.id;
-            message.reply('alright. start counting then.');
+            message.channel.send('alright. start counting then.');
         }
     }, [], [ "438296397452935169" ]),
     
+    //resetCount
     new Command("patterns/counting", "resetCount", "resets the current count", function(message) {
         resetNumber(message, 'reset the count!', '✅');
     }, [], [ "438296397452935169" ]),
 
+    //chainHere
     new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", function(message) {
         if (chainChannel === message.channel.id) {
             chainChannel = "";
-            message.reply('the chain in this channel has been eliminated.');
+            message.channel.send('the chain in this channel has been eliminated.');
         } else {
             chainChannel = message.channel.id;
-            message.reply('alright. start a chain then.');
+            message.channel.send('alright. start a chain then.');
         }
-        
     }, [], [ "438296397452935169" ]),
 
+    //autoChain
     new Command("patterns/chaining", "autoChain", "sets the current channel to be the channel used for message chains", function(message) {
-        if (chainChannel === message.channel.id) {
-            chainChannel = "";
-            message.reply('the chain in this channel has been eliminated.');
-        } else {
-            chainChannel = message.channel.id;
-            message.reply('alright. start a chain then.');
-        }
-    }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", typeof(Number), 4) ], [ "438296397452935169" ]),
+        
+    }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
     
     new Command("bot", "kill", "kills the bot", function(message) {
         message.channel.send('bot is now dead 😢');
@@ -122,16 +199,16 @@ const commands = [
 ];
 
 // counting variables
-var currentNumber = 0; // the last number said that was correct
-var prevNumber = 0;    // used to reset back to the last number if i messed up my code
-var highestNumber = 0; // the highest number ever gotten to
-var lastCounter = "";  // used to check for duplicates
+var currentNumber = 0;  // the last number said that was correct
+var prevNumber    = 0;  // used to reset back to the last number if i messed up my code
+var highestNumber = 0;  // the highest number ever gotten to
+var lastCounter   = ""; // used to check for duplicates
 
 // chain variables
-var currentChain = "";
-var chainAmount = 0;
-var prevChain = "";
-var lastChainer = "";
+var currentChain = ""; // 
+var chainAmount  = 0;  // 
+var prevChain    = ""; // 
+var lastChainer  = ""; // 
 
 // are set using commands
 var countingChannel = "";
@@ -148,6 +225,7 @@ async function resetNumber(message, reply = 'empty. astrl screwed up lol', react
     currentNumber = 0;
     message.react(react);
     await message.reply(reply);
+    save();
 }
 
 // When the client is ready, run this code (only once)
@@ -158,6 +236,12 @@ client.once(Events.ClientReady, c => {
     //client.channels.fetch('887502008876167212')
     //    .then(channel => channel.send('DIE DIE DIE'))
     //    .catch(console.error("blehhh"));
+    try {
+        saveData = JSON.parse(fs.readFileSync('./save-data.json', 'utf8')); // Load save data
+    } catch(e) {
+        // Init if no save data found
+        saveData = new SaveData();
+    }
 });
 
 client.on(Events.MessageCreate, async message => {
@@ -165,7 +249,7 @@ client.on(Events.MessageCreate, async message => {
 
     for (let i = 0; i < commands.length; i++) {
         let com = commands[i];
-        if (("$"+com.commandName) === message.content.substring(0, com.commandName.length + 1)) {
+        if (("$"+com.commandName) === message.content.toLowerCase().split(' ')[0]) {
             if (com.limitedTo.count === undefined || com.limitedTo.includes(message.author.id)) {
                 com.func(message);
                 return;
@@ -212,6 +296,7 @@ client.on(Events.MessageCreate, async message => {
                 'you got pretty far. but i think you could definitely do better than ' + highestNumber + '.'
             );
         }
+        save();
     } else if (message.channel.id === chainChannel) {
         if (!currentChain) {
             currentChain = message.content.toLowerCase();
@@ -233,6 +318,7 @@ client.on(Events.MessageCreate, async message => {
         // } else if (chainAmount < 3) {
         //     message.react('⛓️');
         // }
+        save();
     }
 });
 
