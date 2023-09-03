@@ -34,14 +34,11 @@ class Command {
 }
 
 class Param {
-    constructor(paramName, desc, preset) {
-        this.paramName = paramName;
+    constructor(desc, preset) {
         this.desc = desc;
         this.preset = preset;
     }
 }
-
-
 
 class SaveData {
     constructor(currentNumber, prevNumber, highestNumber, lastCounter, currentChain, chainAmount, prevChain, lastChainer, countingChannel, chainChannel) {
@@ -100,6 +97,11 @@ function everythingAfter(content)
     return content.substring(content.indexOf(' '));
 }
 
+// function replaceAll(str1, str2, ignore) 
+// {
+//     return this.replace(new RegExp(str1.replace(/([\/\,\!\\\^\$\{\}\[\]\(\)\.\*\+\?\|\<\>\-\&])/g,"\\$&"),(ignore?"gi":"g")),(typeof(str2)=="string")?str2.replace(/\$/g,"$$$$"):str2);
+// }
+
 function noPingReply(message, reply)
 {
     message.reply({ 
@@ -114,7 +116,7 @@ const commands = [
         let response = message.author.toString() + "\n";
         let content = message.content.split(' ')[1];
         
-        let whichCommand = paramFunc(content, this.params[0]);
+        let whichCommand = paramFunc(content, this.params["whichCommand"]);
         console.log(message.content.split(' ')[1]);
         if (message.content.split(' ')[1] === undefined) {
             for (let i = 0; i < commands.length; i++) {
@@ -124,13 +126,16 @@ const commands = [
                     response += `$${element.commandName} : ${element.desc} \n`;
                 }
             }
-        } else {
+        } /* else {
             message.react('✅');
             let command = commands.find(x => x.commandName === whichCommand);
             response = `$${command.commandName} : ${command.desc}`;
-        }
+        } */
         noPingReply(message, response);
-    }, [new Param("whichCommand", "", "")], []),
+    }, {
+        "whichCommand" : new Param("", ""),
+        "debugMode" : new Param("", ""),
+    }, []),
 
     //eval
     new Command("fun", "eval", "does the math put in front of it", function(message) {
@@ -141,7 +146,7 @@ const commands = [
             eval = error;
         }
         noPingReply(message, String(eval));
-    }, [], [ "438296397452935169" ]),
+    }, {}, [ "438296397452935169" ]),
     
     //echo
     new Command("fun", "echo", "echoes whatever's in front of it", function(message) {
@@ -153,18 +158,18 @@ const commands = [
         } finally {
             message.channel.send(reply);
         }
-    }, [], [ "438296397452935169" ]),
+    }, {}, [ "438296397452935169" ]),
     
     //countHere
     new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", function(message) {
-        if (countingChannel = message.channel.id) {
+        if (countingChannel === message.channel.id) {
             countingChannel = "";
             message.channel.send('counting in this channel has ceased.');
         } else {
             countingChannel = message.channel.id;
             message.channel.send('alright. start counting then.');
         }
-    }, [], [ "438296397452935169" ]),
+    }, {}, [ "438296397452935169" ]),
     
     //resetCount
     new Command("patterns/counting", "resetCount", "resets the current count", function(message) {
@@ -180,14 +185,26 @@ const commands = [
             chainChannel = message.channel.id;
             message.channel.send('alright. start a chain then.');
         }
-    }, [], [ "438296397452935169" ]),
+    }, {
+        "secondTest" : new Param("", "")
+    }, [ "438296397452935169" ]),
 
     //autoChain
     new Command("patterns/chaining", "autoChain", "sets the current channel to be the channel used for message chains", function(message) {
         
-    }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
+    }, { "howMany" : new Param("how many messages in a row does it take for the chain to trigger?", 4) }, [ "438296397452935169" ]),
     
     new Command("bot", "kill", "kills the bot", function(message) {
+        message.channel.send('bot is now dead 😢');
+        client.destroy();
+    }, [], 
+    [
+        "438296397452935169",
+        "705120334705197076",
+        "686222324860715014",
+    ]),
+    
+    new Command("bot", "test", "kills the bot", function(message) {
         message.channel.send('bot is now dead 😢');
         client.destroy();
     }, [], 
@@ -246,16 +263,45 @@ client.once(Events.ClientReady, c => {
 
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
+    let cont = message.content;
 
     for (let i = 0; i < commands.length; i++) {
         let com = commands[i];
-        if (("$"+com.commandName) === message.content.toLowerCase().split(' ')[0]) {
+
+        if (("$"+com.commandName) === message.content.substring(0, message.content.indexOf(' '))) {
             if (com.limitedTo.count === undefined || com.limitedTo.includes(message.author.id)) {
-                com.func(message);
-                return;
+                let parameters = [];
+                
+                if (message.content.includes('"')) {
+                    console.log("blehhhh");
+                    let sections = message.content.split('"');
+                    for (let i = 0; i < sections.count; i++) {
+                        if (i % 2 == 1 && sections[i].includes(' ')) {
+                            sections[i] = sections[i].replaceAll(' ', '|');
+                        }
+                    }
+                    console.log(sections.join());
+                }
+
+                // attempt 1
+                // let loops = 0;
+                // let start, end;
+                // while (cont.loops < 10) {
+                //     let cont = message.content;
+                //     start = cont.indexOf('<') + 1;
+                //     if (end !== cont.lastIndexOf('>')) {
+                //         end = cont.lastIndexOf('>');
+                //     } else break;
+                    
+                //     cont.substring(start, end).replaceAll('');
+                //     endIndex = end;
+                // }
+                com.func(message, parameters);
             } else {
                 await message.reply('hey, you can\'t use this command!');
+
             }
+            return;
         }
     }
     
