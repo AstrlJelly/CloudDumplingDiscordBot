@@ -3,9 +3,14 @@ const { Client, Events, GatewayIntentBits, GuildChannel, Emoji, PartialGroupDMCh
 const { globalPrefix, token } = require('./config.json');
 const { wordsToNumbers } = require('words-to-numbers');
 const { evaluate } = require('mathjs');
+const { Database, OPEN_READWRITE } = require('sqlite3');
 const Keyv = require('keyv');
 const keyv = new Keyv({ serialize: JSON.stringify, deserialize: JSON.parse });
-const prefixes = new Keyv('sqlite://path/to.sqlite');
+//const prefixes = new Keyv('sqlite://path/to.sqlite');
+
+const persistPath = "./persistence/persist.db";
+const usersPath   = "./persistence/users.db";
+var db;
 
 // Create a new client instance
 const client = new Client({
@@ -25,13 +30,13 @@ String.prototype.insert = function(index, string) {
     return string + this;
 };
 
-class Person {
-    constructor(userId, strikes, desc) {
-        this.userId = userId;
-        this.strikes = strikes;
-        this.desc = desc;
-    }
-}
+// class Person {
+//     constructor(userId, strikes, desc) {
+//         this.userId = userId;
+//         this.strikes = strikes;
+//         this.desc = desc;
+//     }
+// }
 
 class Command {
     constructor(genre, commandName, desc, func, params = [], limitedTo = []) {
@@ -52,54 +57,31 @@ class Param {
     }
 }
 
-class SaveData {
-    constructor(currentNumber, prevNumber, highestNumber, lastCounter, currentChain, chainAmount, prevChain, lastChainer, countingChannel, chainChannel) {
-        // counting stuff
-        this.currentNumber = currentNumber;
-        this.prevNumber = prevNumber;
-        this.highestNumber = highestNumber;
-        this.lastCounter = lastCounter;
-        // chain stuff
-        this.currentChain = currentChain;
-        this.chainAmount = chainAmount;
-        this.prevChain = prevChain;
-        this.lastChainer = lastChainer;
-        // channel persistence
-        this.countingChannel = countingChannel;
-        this.chainChannel = chainChannel;
-    }
-}
-
-var saveData;
-
-function paramFunc(content, param) 
-{
-    let type = typeof param.preset;
-    
-    switch (type.toLowerCase())
-    {
-        case "string":
-            return String(content);
-        case "number":
-            return Number(content);
-        case "boolean":
-            return content.toLowerCase() == "true" ? true : false;
-        default:
-            throw "Unsupported type";
-    }
-}
+// class SaveData {
+//     constructor(currentNumber, prevNumber, highestNumber, lastCounter, currentChain, chainAmount, prevChain, lastChainer, countingChannel, chainChannel) {
+//         // counting stuff
+//         this.currentNumber = currentNumber;
+//         this.prevNumber = prevNumber;
+//         this.highestNumber = highestNumber;
+//         this.lastCounter = lastCounter;
+//         // chain stuff
+//         this.currentChain = currentChain;
+//         this.chainAmount = chainAmount;
+//         this.prevChain = prevChain;
+//         this.lastChainer = lastChainer;
+//         // channel persistence
+//         this.countingChannel = countingChannel;
+//         this.chainChannel = chainChannel;
+//     }
+// }
 
 // function replaceAll(str1, str2, ignore) 
 // {
 //     return this.replace(new RegExp(str1.replace(/([\/\,\!\\\^\$\{\}\[\]\(\)\.\*\+\?\|\<\>\-\&])/g,"\\$&"),(ignore?"gi":"g")),(typeof(str2)=="string")?str2.replace(/\$/g,"$$$$"):str2);
 // }
 
-function noPingReply(message, reply)
-{
-    message.reply({ 
-        content: reply, 
-        allowedMentions: { repliedUser: false }
-    });
+function noPingReply(message, reply) {
+    message.reply({ content: reply, allowedMentions: { repliedUser: false } });
 }
 
 const commands = [
@@ -119,11 +101,16 @@ const commands = [
                 }
             }
         }
-        if (Boolean(parameters["whichCommand"])) {
-            addToHelp(commands.find(x => x.commandName === parameters["whichCommand"]));
-        } else {
-            commands.forEach(x => addToHelp(x));
+        try {
+            if (Boolean(parameters["whichCommand"])) {
+                addToHelp(commands.find(x => x.commandName === parameters["whichCommand"]));
+            } else {
+                commands.forEach(x => addToHelp(x));
+            }
+        } catch (error) {
+            noPingReply(message, ``)
         }
+        
         noPingReply(message, response);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
@@ -133,13 +120,13 @@ const commands = [
 
     //eval
     new Command("general/fun", "math", "does the math put in front of it", function(message, parameters) {
-        var eval = '';
+        var math = '';
         try {
-            eval = evaluate(parameters["equation"]);
+            math = evaluate(parameters["equation"]);
         } catch (error) {
-            eval = error;
+            math = error;
         }
-        noPingReply(message, String(eval));
+        noPingReply(message, String(math));
     }, [
         new Param("equation", "the equation to be evaluated", ""),
         //new Param("return", "should the ", ""),
@@ -174,9 +161,9 @@ const commands = [
     
     // countHere
     new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", function(message, parameters) {
-        let isChannel = countingChannel === message.channel.id
+        let isChannel = count.channel === message.channel.id
 
-        countingChannel = isChannel ? "" : message.channel.id;
+        count.channel = isChannel ? "" : message.channel.id;
         message.channel.send(isChannel ? 'counting in this channel has ceased.' : 'alright. start counting then.')
     }, [], [ "438296397452935169" ]),
     
@@ -187,9 +174,9 @@ const commands = [
 
     // chainHere
     new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", function(message, parameters) {
-        let isChannel = chainChannel === message.channel.id
+        let isChannel = chain.channel === message.channel.id
 
-        countingChannel = isChannel ? "" : message.channel.id;
+        count.channel = isChannel ? "" : message.channel.id;
         message.channel.send(isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.')
     }, [
 
@@ -224,30 +211,32 @@ const commands = [
 ];
 
 // counting variables
-var currentNumber = 0;  // the last number said that was correct
-var prevNumber    = 0;  // used to reset back to the last number if i messed up my code
-var highestNumber = 0;  // the highest number ever gotten to
-var lastCounter   = ""; // used to check for duplicates
+const count = {
+    channel     : "",
+    currentNum  : 0,  // the last number said that was correct
+    prevNumber  : 0,  // used to reset back to the last number if i messed up my code
+    highestNum  : 0,  // the highest number ever gotten to
+    lastCounter : "", // used to check for duplicates
+}
 
 // chain variables
-var currentChain = ""; // 
-var chainAmount  = 0;  // 
-var prevChain    = ""; // 
-var lastChainer  = ""; // 
-
-// are set using commands
-var countingChannel = "";
-var chainChannel = "";
+const chain = {
+    channel      : "", //
+    currentChain : "", // 
+    chainAmount  : 0,  // 
+    prevChain    : "", // 
+    lastChainer  : "", // 
+}
 
 // blacklist list, the function to push to it will be blacklist()
 const bl = [];
 
 async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀')
 {
-    if (currentNumber > highestNumber) highestNumber = currentNumber;
-    lastCounter = '';
-    prevNumber = currentNumber;
-    currentNumber = 0;
+    if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
+    count.lastCounter = '';
+    count.prevNumber = count.currentNum;
+    count.currentNum = 0;
     message.react(react);
     await message.reply(reply);
 }
@@ -255,24 +244,82 @@ async function resetNumber(message, reply = 'empty. astrl screwed up lol', react
 // keyv stuff
 keyv.on('error', err => console.error('Keyv connection error:', err));
 
+function createDatabase() {
+    var newdb = new Database(persistPath, (err) => {
+        if (err) {
+            console.log("Getting error " + err);
+            exit(1);
+        }
+        createTables(newdb);
+    });
+}
+
+function createTables(newdb) {
+    newdb.exec(`
+    create table user (
+        user_id text primary key not null,
+        user_name text not null,
+        count_screws int not null,
+        chain_screws int not null,
+    );
+    insert into user (user_id, user_name, count_screws, chain_screws)
+        values (1, 'Spiderman', 'N', 'Y'),
+               (2, 'Tony Stark', 'N', 'N'),
+               (3, 'Jean Grey', 'Y', 'N');
+
+    create table hero_power (
+        hero_id int not null,
+        hero_power text not null
+    );
+
+    insert into hero_power (hero_id, hero_power)
+        values (1, 'Web Slinging'),
+               (1, 'Super Strength'),
+               (1, 'Total Nerd'),
+               (2, 'Total Nerd'),
+               (3, 'Telepathic Manipulation'),
+               (3, 'Astral Projection');
+        `, ()  => {
+            runQueries(newdb);
+    });
+}
+
+function runQueries(db) {
+    db.all(`select hero_name, is_xman, was_snapped from hero h
+   inner join hero_power hp on h.hero_id = hp.hero_id
+   where hero_power = ?`, "Total Nerd", (err, rows) => {
+        rows.forEach(row => {
+            console.log(row.hero_name + "\t" +row.is_xman + "\t" +row.was_snapped);
+        });
+    });
+}
+
 // when the client is ready, run this code
 client.once(Events.ClientReady, c => {
+    // new Database(persistPath, OPEN_READWRITE, (err) => {
+    //     if (err && err.code == "SQLITE_CANTOPEN") {
+    //         createDatabase();
+    //         return;
+    //     } else if (err) {
+    //         console.log("Getting error " + err);
+    //         exit(1);
+    //     }
+    //     runQueries(db);
+    // });
 	console.log(`Ready! Logged in as ${c.user.tag}`);
-    //console.log(client.channels.fetch('887502008876167212'));
-    //client.channels.fetch('887502008876167212')
-    //    .then(channel => channel.send('DIE DIE DIE'))
-    //    .catch(console.error("blehhh"));
-    try {
-        saveData = JSON.parse(fs.readFileSync('./save-data.json', 'utf8')); // Load save data
-    } catch(e) {
-        // Init if no save data found
-        saveData = new SaveData();
-    }
+    
+    // try {
+    //     saveData = JSON.parse(fs.readFileSync('./save-data.json', 'utf8')); // Load save data
+    // } catch(e) {
+    //     // Init if no save data found
+    //     saveData = new SaveData();
+    // }
 });
 
-client.on(Events.MessageCreate, async message => {
+client.on(Events.MessageCreate, async (message, content) => {
     if (message.author.bot) return;
     let cont = message.content;
+    console.log(content);
 
     for (let i = 0; i < commands.length; i++) {
         let com = commands[i];
@@ -296,22 +343,30 @@ client.on(Events.MessageCreate, async message => {
                     let j = 0;
                     for (let i = 0; i < tempParameters.length; i++) {
                         if (tempParameters[i].includes(':') && com.params.forEach(x => x.name === tempParameters[i].split(':')[0])) {
-                            let name = tempParameters[i].split(':')[0];
-                            paramObj[name] = paramFunc(tempParameters[i], com.params[i]);
+                            paramObj[tempParameters[i].split(':')[0]] = convParam(com.params[i]);
                         } else {
-                            let name = com.params[j].name;
-                            paramObj[name] = paramFunc(tempParameters[i], com.params[j]);
+                            paramObj[com.params[j].name] = convParam(com.params[j]);
                             j++;
                         }
-                    }
-                    for (let i = 0; i < com.params.length; i++) {
-                        let param = com.params[i];
-                        if (paramObj[param.name] === null) {
-                            paramObj[param.name] = param.preset;
-                        } 
+    
+                        function convParam(param) {
+                            switch ((typeof param.preset).toLowerCase()) {
+                                case "string": return String(tempParameters[i]);
+                                case "number": return Number(tempParameters[i]);
+                                case "boolean": return (tempParameters[i].toLowerCase() == "true") ? true : false;
+                                default: throw "Unsupported type";
+                            }
+                        }
                     }
                 }
 
+                for (let i = 0; i < com.params.length; i++) {
+                    let param = com.params[i];
+                    if (paramObj[param.name] === null) {
+                        paramObj[param.name] = param.preset;
+                    } 
+                }
+                
                 com.func(message, paramObj);
             } else {
                 await message.reply('hey, you can\'t use this command!');
@@ -321,7 +376,7 @@ client.on(Events.MessageCreate, async message => {
         }
     }
     
-    if (message.channel.id === countingChannel) {
+    if (message.channel.id === count.channel) {
         var num = 0;
         
         var content = String(wordsToNumbers(message.content));
@@ -343,34 +398,34 @@ client.on(Events.MessageCreate, async message => {
             return;
         }
 
-        if (lastCounter === message.author.id) {
+        if (count.lastCounter === message.author.id) {
             resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
             return;
         }
         
-        if (num == currentNumber + 1) {
+        if (num == count.currentNum + 1) {
             message.react('✅');
-            lastCounter = message.author.id;
-            currentNumber++;
+            count.lastCounter = message.author.id;
+            count.currentNum++;
         } else {
-            resetNumber(message, (prevNumber < 10) ?
+            resetNumber(message, (count.prevNumber < 10) ?
                 'you can do better than THAT...' :
-                'you got pretty far. but i think you could definitely do better than ' + highestNumber + '.'
+                'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
             );
         }
-    } else if (message.channel.id === chainChannel) {
-        if (!currentChain) {
-            currentChain = message.content.toLowerCase();
-            chainAmount = 1;
+    } else if (message.channel.id === chain.channel) {
+        if (!chain.currentChain) {
+            chain.currentChain = message.content.toLowerCase();
+            chain.chainAmount = 1;
             return;
         }
-        if (message.content.toLowerCase() === currentChain && lastChainer !== message.author.id) {
-            chainAmount++;
-            if (chainAmount >= 3) message.react('⛓️');
+        if (message.content.toLowerCase() === chain.currentChain && chain.lastChainer !== message.author.id) {
+            chain.chainAmount++;
+            if (chain.chainAmount >= 3) message.react('⛓️');
         } else {
-            if (chainAmount >= 3) message.react('💔');
-            currentChain = message.content.toLowerCase();
-            chainAmount = 1;
+            if (chain.chainAmount >= 3) message.react('💔');
+            chain.currentChain = message.content.toLowerCase();
+            chain.chainAmount = 1;
         }
         lastChainer = message.author.id;
     }
