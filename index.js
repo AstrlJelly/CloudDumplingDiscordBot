@@ -1,8 +1,11 @@
 // Require the necessary discord.js classes
-const { Client, Events, GatewayIntentBits, GuildChannel, Emoji } = require('discord.js');
-const { token } = require('./config.json');
+const { Client, Events, GatewayIntentBits, GuildChannel, Emoji, PartialGroupDMChannel } = require('discord.js');
+const { globalPrefix, token } = require('./config.json');
 const { wordsToNumbers } = require('words-to-numbers');
 const { evaluate } = require('mathjs');
+const Keyv = require('keyv');
+const keyv = new Keyv({ serialize: JSON.stringify, deserialize: JSON.parse });
+const prefixes = new Keyv('sqlite://path/to.sqlite');
 
 // Create a new client instance
 const client = new Client({
@@ -13,6 +16,14 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
     ]
 });
+
+String.prototype.insert = function(index, string) {
+    if (index > 0) {
+        return this.substring(0, index) + string + this.substring(index, this.length);
+    }
+
+    return string + this;
+};
 
 class Person {
     constructor(userId, strikes, desc) {
@@ -34,7 +45,8 @@ class Command {
 }
 
 class Param {
-    constructor(desc, preset) {
+    constructor(name, desc, preset) {
+        this.name = name;
         this.desc = desc;
         this.preset = preset;
     }
@@ -60,25 +72,10 @@ class SaveData {
 
 var saveData;
 
-function save() {
-    saveData = new SaveData(
-        currentNumber,
-        prevNumber,
-        highestNumber,
-        lastCounter,
-        currentChain,
-        chainAmount,
-        prevChain,
-        lastChainer,
-        countingChannel,
-        chainChannel,
-    )
-    fs.writeFileSync('./save-data.json', JSON.stringify(saveData));
-}
-
 function paramFunc(content, param) 
 {
     let type = typeof param.preset;
+    
     switch (type.toLowerCase())
     {
         case "string":
@@ -92,11 +89,6 @@ function paramFunc(content, param)
     }
 }
 
-function everythingAfter(content)
-{
-    return content.substring(content.indexOf(' '));
-}
-
 // function replaceAll(str1, str2, ignore) 
 // {
 //     return this.replace(new RegExp(str1.replace(/([\/\,\!\\\^\$\{\}\[\]\(\)\.\*\+\?\|\<\>\-\&])/g,"\\$&"),(ignore?"gi":"g")),(typeof(str2)=="string")?str2.replace(/\$/g,"$$$$"):str2);
@@ -107,94 +99,108 @@ function noPingReply(message, reply)
     message.reply({ 
         content: reply, 
         allowedMentions: { repliedUser: false }
-    })
+    });
 }
 
 const commands = [
     //help
-    new Command("bot", "help", "lists all commands", function(message) {
-        let response = message.author.toString() + "\n";
-        let content = message.content.split(' ')[1];
-        
-        let whichCommand = paramFunc(content, this.params["whichCommand"]);
-        console.log(message.content.split(' ')[1]);
-        if (message.content.split(' ')[1] === undefined) {
-            for (let i = 0; i < commands.length; i++) {
-                let element = commands[i];
-                response += `$${element.commandName} : ${element.desc} \n`;
-                if (element.params.count !== undefined) {
-                    response += `$${element.commandName} : ${element.desc} \n`;
+    new Command("bot/support", "help", "lists all commands", function(message, parameters) {
+        let response = "";
+        function addToHelp(com) {
+            response += `$${com.commandName} (`;
+            for (let i = 0; i < com.params.length; i++) {
+                let name = com.params[i].name;
+                response += i === com.params.length - 1 ? name : `${name}, `;
+            }
+            response += `) : ${com.desc} \n`;
+            if (parameters["paramDescs"]) {
+                for (let i = 0; i < com.params.length; i++) {
+                    response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
                 }
             }
-        } /* else {
-            message.react('✅');
-            let command = commands.find(x => x.commandName === whichCommand);
-            response = `$${command.commandName} : ${command.desc}`;
-        } */
+        }
+        if (Boolean(parameters["whichCommand"])) {
+            addToHelp(commands.find(x => x.commandName === parameters["whichCommand"]));
+        } else {
+            commands.forEach(x => addToHelp(x));
+        }
         noPingReply(message, response);
-    }, {
-        "whichCommand" : new Param("", ""),
-        "debugMode" : new Param("", ""),
-    }, []),
+    }, [
+        new Param("paramDescs", "include parameter descriptions", false),
+        new Param("whichCommand", "will return help for a specific command", ""),
+        new Param("debugMode", "idk what this does yet lol", false),
+    ], []),
 
     //eval
-    new Command("fun", "eval", "does the math put in front of it", function(message) {
+    new Command("general/fun", "math", "does the math put in front of it", function(message, parameters) {
         var eval = '';
         try {
-            eval = evaluate(everythingAfter(message.content));
+            eval = evaluate(parameters["equation"]);
         } catch (error) {
             eval = error;
         }
         noPingReply(message, String(eval));
-    }, {}, [ "438296397452935169" ]),
+    }, [
+        new Param("equation", "the equation to be evaluated", ""),
+        //new Param("return", "should the ", ""),
+    ], []),
+
+    // run
+    new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", function(message, parameters) {
+        var code = '';
+        try {
+            code = eval(parameters["code"]);
+            if (parameters["return"]) noPingReply(message, String(code));
+        } catch (error) {
+            noPingReply(message, String(error));
+        }
+    }, [
+        new Param("code", "the code to run", ""),
+        new Param("return", "should the ", true),
+    ], [ "438296397452935169" ]),
     
-    //echo
-    new Command("fun", "echo", "echoes whatever's in front of it", function(message) {
+    // echo
+    new Command("general/fun", "echo", "echoes whatever's in front of it", function(message, parameters) {
         let reply = "something broke";
         try {
-            reply = everythingAfter(message.content);
-        } catch (error) {
-            reply = error;
-        } finally {
+            reply = parameters["reply"];
             message.channel.send(reply);
+        } catch (error) {
+            message.channel.send(error);
         }
-    }, {}, [ "438296397452935169" ]),
+    }, [
+        new Param("reply", "the message to echo back to you", "..."),
+    ], []),
     
-    //countHere
-    new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", function(message) {
-        if (countingChannel === message.channel.id) {
-            countingChannel = "";
-            message.channel.send('counting in this channel has ceased.');
-        } else {
-            countingChannel = message.channel.id;
-            message.channel.send('alright. start counting then.');
-        }
-    }, {}, [ "438296397452935169" ]),
+    // countHere
+    new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", function(message, parameters) {
+        let isChannel = countingChannel === message.channel.id
+
+        countingChannel = isChannel ? "" : message.channel.id;
+        message.channel.send(isChannel ? 'counting in this channel has ceased.' : 'alright. start counting then.')
+    }, [], [ "438296397452935169" ]),
     
-    //resetCount
-    new Command("patterns/counting", "resetCount", "resets the current count", function(message) {
+    // resetCount
+    new Command("patterns/counting", "resetCount", "resets the current count", function(message, parameters) {
         resetNumber(message, 'reset the count!', '✅');
     }, [], [ "438296397452935169" ]),
 
-    //chainHere
-    new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", function(message) {
-        if (chainChannel === message.channel.id) {
-            chainChannel = "";
-            message.channel.send('the chain in this channel has been eliminated.');
-        } else {
-            chainChannel = message.channel.id;
-            message.channel.send('alright. start a chain then.');
-        }
-    }, {
-        "secondTest" : new Param("", "")
-    }, [ "438296397452935169" ]),
+    // chainHere
+    new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", function(message, parameters) {
+        let isChannel = chainChannel === message.channel.id
 
-    //autoChain
-    new Command("patterns/chaining", "autoChain", "sets the current channel to be the channel used for message chains", function(message) {
+        countingChannel = isChannel ? "" : message.channel.id;
+        message.channel.send(isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.')
+    }, [
+
+    ], [ "438296397452935169" ]),
+
+    // autoChain
+    new Command("patterns/chaining", "autoChain", "will let any channel start a chain", function(message, parameters) {
         
-    }, { "howMany" : new Param("how many messages in a row does it take for the chain to trigger?", 4) }, [ "438296397452935169" ]),
+    }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
     
-    new Command("bot", "kill", "kills the bot", function(message) {
+    new Command("bot", "kill", "kills the bot", function(message, parameters) {
         message.channel.send('bot is now dead 😢');
         client.destroy();
     }, [], 
@@ -204,10 +210,12 @@ const commands = [
         "686222324860715014",
     ]),
     
-    new Command("bot", "test", "kills the bot", function(message) {
+    new Command("bot", "test", "kills the bot", function(message, parameters) {
         message.channel.send('bot is now dead 😢');
         client.destroy();
-    }, [], 
+    }, [
+        new Param("secondTest", "", "")
+    ], 
     [
         "438296397452935169",
         "705120334705197076",
@@ -231,7 +239,7 @@ var lastChainer  = ""; //
 var countingChannel = "";
 var chainChannel = "";
 
-// blacklist list, the function to push to it is blacklist()
+// blacklist list, the function to push to it will be blacklist()
 const bl = [];
 
 async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀')
@@ -242,11 +250,12 @@ async function resetNumber(message, reply = 'empty. astrl screwed up lol', react
     currentNumber = 0;
     message.react(react);
     await message.reply(reply);
-    save();
 }
 
-// When the client is ready, run this code (only once)
-// We use 'c' for the event parameter to keep it separate from the already defined 'client'
+// keyv stuff
+keyv.on('error', err => console.error('Keyv connection error:', err));
+
+// when the client is ready, run this code
 client.once(Events.ClientReady, c => {
 	console.log(`Ready! Logged in as ${c.user.tag}`);
     //console.log(client.channels.fetch('887502008876167212'));
@@ -268,35 +277,42 @@ client.on(Events.MessageCreate, async message => {
     for (let i = 0; i < commands.length; i++) {
         let com = commands[i];
 
-        if (("$"+com.commandName) === message.content.substring(0, message.content.indexOf(' '))) {
-            if (com.limitedTo.count === undefined || com.limitedTo.includes(message.author.id)) {
-                let parameters = [];
-                
-                if (message.content.includes('"')) {
-                    console.log("blehhhh");
+        if (("$"+com.commandName) === message.content.split(' ')[0]) {
+            if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
+                // parameter stuff
+                let paramObj = {};
+                if (message.content.split(' ')[1] !== null) {
                     let sections = message.content.split('"');
-                    for (let i = 0; i < sections.count; i++) {
-                        if (i % 2 == 1 && sections[i].includes(' ')) {
-                            sections[i] = sections[i].replaceAll(' ', '|');
+                    if (message.content.includes('"')) {
+                        for (let i = 0; i < sections.length; i++) {
+                            if (i % 2 == 1 && sections[i].includes(' ')) {
+                                sections[i] = sections[i].split(' ').join('');
+                            }
                         }
                     }
-                    console.log(sections.join());
+                    let tempParameters = sections.join('').split(' ');
+                    tempParameters.shift();
+
+                    let j = 0;
+                    for (let i = 0; i < tempParameters.length; i++) {
+                        if (tempParameters[i].includes(':') && com.params.forEach(x => x.name === tempParameters[i].split(':')[0])) {
+                            let name = tempParameters[i].split(':')[0];
+                            paramObj[name] = paramFunc(tempParameters[i], com.params[i]);
+                        } else {
+                            let name = com.params[j].name;
+                            paramObj[name] = paramFunc(tempParameters[i], com.params[j]);
+                            j++;
+                        }
+                    }
+                    for (let i = 0; i < com.params.length; i++) {
+                        let param = com.params[i];
+                        if (paramObj[param.name] === null) {
+                            paramObj[param.name] = param.preset;
+                        } 
+                    }
                 }
 
-                // attempt 1
-                // let loops = 0;
-                // let start, end;
-                // while (cont.loops < 10) {
-                //     let cont = message.content;
-                //     start = cont.indexOf('<') + 1;
-                //     if (end !== cont.lastIndexOf('>')) {
-                //         end = cont.lastIndexOf('>');
-                //     } else break;
-                    
-                //     cont.substring(start, end).replaceAll('');
-                //     endIndex = end;
-                // }
-                com.func(message, parameters);
+                com.func(message, paramObj);
             } else {
                 await message.reply('hey, you can\'t use this command!');
 
@@ -315,7 +331,7 @@ client.on(Events.MessageCreate, async message => {
             matches = content.match('/\d+/');
         }
         try {
-            num = evaluate(content.substring(0, matches[matches.count - 1]));
+            num = evaluate(content.substring(0, matches[matches.length - 1]));
         } catch (error) {
             if (!isNaN(content[0])) {
                 try {
@@ -342,7 +358,6 @@ client.on(Events.MessageCreate, async message => {
                 'you got pretty far. but i think you could definitely do better than ' + highestNumber + '.'
             );
         }
-        save();
     } else if (message.channel.id === chainChannel) {
         if (!currentChain) {
             currentChain = message.content.toLowerCase();
@@ -358,13 +373,6 @@ client.on(Events.MessageCreate, async message => {
             chainAmount = 1;
         }
         lastChainer = message.author.id;
-        // if (message.content.toLowerCase() === currentChain) {
-        //     chainAmount++;
-        //     if (chainAmount > 3) message.react('⛓️');
-        // } else if (chainAmount < 3) {
-        //     message.react('⛓️');
-        // }
-        save();
     }
 });
 
