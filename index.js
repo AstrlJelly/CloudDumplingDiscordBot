@@ -1,5 +1,5 @@
 // Require the necessary discord.js classes
-const { Client, Events, GatewayIntentBits, GuildChannel, Emoji, PartialGroupDMChannel } = require('discord.js');
+const { Client, Events, GatewayIntentBits, GuildChannel, Emoji, PartialGroupDMChannel, Message } = require('discord.js');
 const { globalPrefix, token } = require('./config.json');
 const { wordsToNumbers } = require('words-to-numbers');
 const { evaluate } = require('mathjs');
@@ -108,7 +108,7 @@ const commands = [
                 commands.forEach(x => addToHelp(x));
             }
         } catch (error) {
-            noPingReply(message, ``)
+            noPingReply(message, `${parameters["whichCommand"]} is NOT a command. try again :/`)
         }
         
         noPingReply(message, response);
@@ -158,6 +158,39 @@ const commands = [
     }, [
         new Param("reply", "the message to echo back to you", "..."),
     ], []),
+
+    // mock
+    new Command("general/fun", "mock", "mocks text/whoever you reply to", async function(message, parameters) {
+        try {
+            await message.fetchReference()
+            .then(x => {
+                mockFunc(x, x.content);
+                message.delete();
+            });
+        } catch (error) {
+            mockFunc(message, parameters["reply"])
+        }
+
+        function mockFunc(reply, content) {
+            const mock = [];
+            for (let i = 0; i < content.length; i++) {
+                // let vary = i % 2 == 0;
+                // if (parameters["variance"] !== 0) {
+                //     let vary = i % 2 == 0;
+                // }
+
+                // let vary;
+                // if (mock[i - 1] === mock[i - 1].toLowerCase()) {
+                //     vary = ;
+                // }
+                mock.push(vary ? content[i].toLowerCase() : content[i].toUpperCase());
+            }
+            noPingReply(reply, mock.join(''));
+        }
+    }, [
+        new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
+        new Param("reply", "the message to mock", "..."),
+    ], []),
     
     // countHere
     new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", function(message, parameters) {
@@ -184,25 +217,15 @@ const commands = [
 
     // autoChain
     new Command("patterns/chaining", "autoChain", "will let any channel start a chain", function(message, parameters) {
-        
+        chain.autoChain = parameters["howMany"];
+        noPingReply(message, `autoChain is now ${chain.autoChain}.`);
     }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
     
+    // kill
     new Command("bot", "kill", "kills the bot", function(message, parameters) {
         message.channel.send('bot is now dead 😢');
         client.destroy();
     }, [], 
-    [
-        "438296397452935169",
-        "705120334705197076",
-        "686222324860715014",
-    ]),
-    
-    new Command("bot", "test", "kills the bot", function(message, parameters) {
-        message.channel.send('bot is now dead 😢');
-        client.destroy();
-    }, [
-        new Param("secondTest", "", "")
-    ], 
     [
         "438296397452935169",
         "705120334705197076",
@@ -226,6 +249,24 @@ const chain = {
     chainAmount  : 0,  // 
     prevChain    : "", // 
     lastChainer  : "", // 
+    autoChain    : 0,  // 
+    chainFunc    : function(message, inRow) {
+        if (!this.currentChain) {
+            this.currentChain = message.content.toLowerCase();
+            this.chainAmount = 1;
+            return;
+        }
+        if (message.content.toLowerCase() === this.currentChain && this.lastChainer !== message.author.id) {
+            this.chainAmount++;
+            if (this.chainAmount >= inRow) message.react('⛓️');
+        } else {
+            if (this.chainAmount >= inRow) message.react('💔');
+            this.prevChain = this.currentChain;
+            this.currentChain = message.content.toLowerCase();
+            this.chainAmount = 1;
+        }
+        lastChainer = message.author.id;
+    }
 }
 
 // blacklist list, the function to push to it will be blacklist()
@@ -247,7 +288,7 @@ keyv.on('error', err => console.error('Keyv connection error:', err));
 function createDatabase() {
     var newdb = new Database(persistPath, (err) => {
         if (err) {
-            console.log("Getting error " + err);
+            console.error("Getting error " + err);
             exit(1);
         }
         createTables(newdb);
@@ -289,7 +330,7 @@ function runQueries(db) {
    inner join hero_power hp on h.hero_id = hp.hero_id
    where hero_power = ?`, "Total Nerd", (err, rows) => {
         rows.forEach(row => {
-            console.log(row.hero_name + "\t" +row.is_xman + "\t" +row.was_snapped);
+            console.info(row.hero_name + "\t" +row.is_xman + "\t" +row.was_snapped);
         });
     });
 }
@@ -306,7 +347,7 @@ client.once(Events.ClientReady, c => {
     //     }
     //     runQueries(db);
     // });
-	console.log(`Ready! Logged in as ${c.user.tag}`);
+	console.info(`Ready! Logged in as ${c.user.tag}`);
     
     // try {
     //     saveData = JSON.parse(fs.readFileSync('./save-data.json', 'utf8')); // Load save data
@@ -316,15 +357,14 @@ client.once(Events.ClientReady, c => {
     // }
 });
 
-client.on(Events.MessageCreate, async (message, content) => {
+client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
     let cont = message.content;
-    console.log(content);
 
     for (let i = 0; i < commands.length; i++) {
         let com = commands[i];
 
-        if (("$"+com.commandName) === message.content.split(' ')[0]) {
+        if (("$"+com.commandName.toLowerCase()) === message.content.split(' ')[0].toLowerCase()) {
             if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
                 // parameter stuff
                 let paramObj = {};
@@ -333,7 +373,7 @@ client.on(Events.MessageCreate, async (message, content) => {
                     if (message.content.includes('"')) {
                         for (let i = 0; i < sections.length; i++) {
                             if (i % 2 == 1 && sections[i].includes(' ')) {
-                                sections[i] = sections[i].split(' ').join('');
+                                sections[i] = sections[i].split(' ').join('|');
                             }
                         }
                     }
@@ -342,9 +382,13 @@ client.on(Events.MessageCreate, async (message, content) => {
 
                     let j = 0;
                     for (let i = 0; i < tempParameters.length; i++) {
+                        if (tempParameters[i].includes('|')) {
+                            tempParameters[i] = tempParameters[i].split('|').join(' ');
+                        }
                         if (tempParameters[i].includes(':') && com.params.forEach(x => x.name === tempParameters[i].split(':')[0])) {
                             paramObj[tempParameters[i].split(':')[0]] = convParam(com.params[i]);
                         } else {
+                            console.log(com.params[j]);
                             paramObj[com.params[j].name] = convParam(com.params[j]);
                             j++;
                         }
@@ -414,20 +458,9 @@ client.on(Events.MessageCreate, async (message, content) => {
             );
         }
     } else if (message.channel.id === chain.channel) {
-        if (!chain.currentChain) {
-            chain.currentChain = message.content.toLowerCase();
-            chain.chainAmount = 1;
-            return;
-        }
-        if (message.content.toLowerCase() === chain.currentChain && chain.lastChainer !== message.author.id) {
-            chain.chainAmount++;
-            if (chain.chainAmount >= 3) message.react('⛓️');
-        } else {
-            if (chain.chainAmount >= 3) message.react('💔');
-            chain.currentChain = message.content.toLowerCase();
-            chain.chainAmount = 1;
-        }
-        lastChainer = message.author.id;
+        chain.chainFunc(message, 3);
+    } else if (chain.autoChain <= 0) {
+        chain.chainFunc(message, chain.autoChain);
     }
 });
 
