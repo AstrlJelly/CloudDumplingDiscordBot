@@ -8,20 +8,33 @@ const Keyv = require('keyv');
 const keyv = new Keyv({ serialize: JSON.stringify, deserialize: JSON.parse });
 //const prefixes = new Keyv('sqlite://path/to.sqlite');
 const scp = require('node-scp');
-const { fchmodSync } = require('fs');
 const fs = require('fs');
+const usetube = require('usetube')
 const path = require("path");
 
 var remote_server = {
     host: '150.230.169.222', // host ip
     port: 22, //port used for scp
     username: 'opc', //username to authenticate
-    // password: 'password', //password to authenticate
-    // forceIPv4: boolean,  //Connection allow only via resolved IPv4 address (true/false)
-    // forceIPv6: boolean,  //Connection allow only via resolved IPv6 address (true/false)
-    privateKey: fs.readFileSync('./ssh.key'),
-    // passphrase: 'your key passphrase',
+    privateKey: './ssh.key',
 }
+
+var jermaFiles;
+scp.Client(remote_server)
+    .then(client => {
+        client.list('/home/opc/mediaHosting/jermaSFX/').then(x => {
+            jermaFiles = x;
+            Object.freeze(jermaFiles);
+        });
+    }).catch(error => console.log(error));
+
+var jermaClips;
+usetube.getPlaylistVideos('PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj')
+    .then(x => {
+        jermaClips = x;
+        console.log(jermaClips);
+        Object.freeze(jermaClips);
+    }).catch(error => console.log(error));
 
 const persistPath = "./persistence/persist.db";
 const usersPath   = "./persistence/users.db";
@@ -33,7 +46,6 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildModeration,
-        GatewayIntentBits.GuildBans,
         GatewayIntentBits.GuildEmojisAndStickers,
         GatewayIntentBits.GuildIntegrations,
         GatewayIntentBits.GuildWebhooks,
@@ -69,14 +81,6 @@ Message.prototype.replyTo = function(reply, ping = true) {
         console.error(error);
     }
 };
-
-// class Person {
-//     constructor(userId, strikes, desc) {
-//         this.userId = userId;
-//         this.strikes = strikes;
-//         this.desc = desc;
-//     }
-// }
 
 class Command {
     constructor(genre, commandName, desc, func, params = [], limitedTo = []) {
@@ -205,26 +209,41 @@ const commands = [
 
     // jerma
     new Command("general/fun", "jerma", "sets the current channel to be the channel used for counting", async function(message, parameters) {
-        message.react('✅');
-        scp.Client(remote_server).then(client => {
-                let result = `./temp/${parameters["fileName"]}.mp3`;
+        console.log(parameters["fileType"]);
+        switch (parameters["fileType"]) {
+            case 0:
+                scp.Client(remote_server)
+                    .then(client => {
+                        message.react('✅');
+                        let result;
+                        let index;
+                        
+                        result = `./temp/${parameters["fileName"]}.mp3`;
+                        index = Math.round(Math.random() * jermaFiles.length - 1);
+                        client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result)
+                            .then(response => {
+                                message.channel.send({ files: [result] });
+                                client.close();
+                            }).catch(error => console.log(error));
+                        }
+                    ).catch(error => console.log(error));
+                break;
+            case 1:
+                //index = Math.round(Math.random() * jermaClips.length - 1);
+                console.log(jermaClips[0]);
+                //message.replyTo(`https://youtu.be/${jermaClips[index].id}`)
+                break;
+            default:
+                message.replyTo(`type "${parameters["fileType"]}" not supported!`);
+                break;
+        }
+        
 
-                client.list('/home/opc/mediaHosting/jermaSFX/')
-                    .then(files => {
-                        let max = files.length - 1;
-                        let min = 0;
-                        let index = Math.round(Math.random() * (max - min) + min);
-
-                        client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${files[index].name}`, result)
-                        .then(response => {
-                            message.channel.send({ files: [result] });
-                            client.close()
-                        })
-                        .catch(error => console.log(error))
-                    })
-                    .catch(error => console.log(error));
-            }
-        );
+        function err(message, error)
+        {
+            message.react('✅');
+            console.log(error);
+        }
     }, [
         new Param("fileType", "the type of jerma file (INITIALIZATION ONLY)", 0),
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
