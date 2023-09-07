@@ -1,5 +1,5 @@
 // Require the necessary discord.js classes
-const { Client, Events, GatewayIntentBits, GuildChannel, Emoji, PartialGroupDMChannel, Message } = require('discord.js');
+const { Client, Events, GatewayIntentBits, Message } = require('discord.js');
 const { globalPrefix, token } = require('./config.json');
 const { wordsToNumbers } = require('words-to-numbers');
 const { evaluate } = require('mathjs');
@@ -7,6 +7,21 @@ const { Database, OPEN_READWRITE } = require('sqlite3');
 const Keyv = require('keyv');
 const keyv = new Keyv({ serialize: JSON.stringify, deserialize: JSON.parse });
 //const prefixes = new Keyv('sqlite://path/to.sqlite');
+const scp = require('node-scp');
+const { fchmodSync } = require('fs');
+const fs = require('fs');
+const path = require("path");
+
+var remote_server = {
+    host: '150.230.169.222', // host ip
+    port: 22, //port used for scp
+    username: 'opc', //username to authenticate
+    // password: 'password', //password to authenticate
+    // forceIPv4: boolean,  //Connection allow only via resolved IPv4 address (true/false)
+    // forceIPv6: boolean,  //Connection allow only via resolved IPv6 address (true/false)
+    privateKey: fs.readFileSync('./ssh.key'),
+    // passphrase: 'your key passphrase',
+}
 
 const persistPath = "./persistence/persist.db";
 const usersPath   = "./persistence/users.db";
@@ -16,9 +31,25 @@ var db;
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.GuildBans,
+        GatewayIntentBits.GuildEmojisAndStickers,
+        GatewayIntentBits.GuildIntegrations,
+        GatewayIntentBits.GuildWebhooks,
+        GatewayIntentBits.GuildInvites,
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildPresences,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildMessageTyping,
         GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageReactions,
+        GatewayIntentBits.DirectMessageTyping,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildScheduledEvents,
+        GatewayIntentBits.AutoModerationConfiguration,
+        GatewayIntentBits.AutoModerationExecution
     ]
 });
 
@@ -30,7 +61,7 @@ String.prototype.insert = function(index, string) {
     return string + this;
 };
 
-Message.prototype.replyTo = function(message, reply, ping = true) {
+Message.prototype.replyTo = function(reply, ping = true) {
     try {
         reply = reply.toString();
         return this.reply({ content: reply, allowedMentions: { repliedUser: ping } });
@@ -66,30 +97,6 @@ class Param {
     }
 }
 
-// class SaveData {
-//     constructor(currentNumber, prevNumber, highestNumber, lastCounter, currentChain, chainAmount, prevChain, lastChainer, countingChannel, chainChannel) {
-//         // counting stuff
-//         this.currentNumber = currentNumber;
-//         this.prevNumber = prevNumber;
-//         this.highestNumber = highestNumber;
-//         this.lastCounter = lastCounter;
-//         // chain stuff
-//         this.currentChain = currentChain;
-//         this.chainAmount = chainAmount;
-//         this.prevChain = prevChain;
-//         this.lastChainer = lastChainer;
-//         // channel persistence
-//         this.countingChannel = countingChannel;
-//         this.chainChannel = chainChannel;
-//     }
-// }
-
-// function replaceAll(str1, str2, ignore) 
-// {
-//     return this.replace(new RegExp(str1.replace(/([\/\,\!\\\^\$\{\}\[\]\(\)\.\*\+\?\|\<\>\-\&])/g,"\\$&"),(ignore?"gi":"g")),(typeof(str2)=="string")?str2.replace(/\$/g,"$$$$"):str2);
-// }
-
-
 const commands = [
     //help
     new Command("bot/support", "help", "lists all commands", function(message, parameters) {
@@ -116,7 +123,7 @@ const commands = [
         } catch (error) {
             message.reply(`${parameters["whichCommand"]} is NOT a command. try again :/`)
         }
-        
+
         message.reply(response);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
@@ -151,7 +158,7 @@ const commands = [
         new Param("code", "the code to run", ""),
         new Param("return", "should the ", true),
     ], [ "438296397452935169" ]),
-    
+
     // echo
     new Command("general/fun", "echo", "echoes whatever's in front of it", function(message, parameters) {
         try {
@@ -195,7 +202,34 @@ const commands = [
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
         new Param("reply", "the message to mock", "..."),
     ], []),
-    
+
+    // jerma
+    new Command("general/fun", "jerma", "sets the current channel to be the channel used for counting", async function(message, parameters) {
+        message.react('✅');
+        scp.Client(remote_server).then(client => {
+                let result = `./temp/${parameters["fileName"]}.mp3`;
+
+                client.list('/home/opc/mediaHosting/jermaSFX/')
+                    .then(files => {
+                        let max = files.length - 1;
+                        let min = 0;
+                        let index = Math.round(Math.random() * (max - min) + min);
+
+                        client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${files[index].name}`, result)
+                        .then(response => {
+                            message.channel.send({ files: [result] });
+                            client.close()
+                        })
+                        .catch(error => console.log(error))
+                    })
+                    .catch(error => console.log(error));
+            }
+        );
+    }, [
+        new Param("fileType", "the type of jerma file (INITIALIZATION ONLY)", 0),
+        new Param("fileName", "the name of the resulting file", "jerma so silly"),
+    ], [ "438296397452935169" ]),
+
     // countHere
     new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", async function(message, parameters) {
         let channelId = parameters?.["channel"] ?? message.channel.id;
@@ -208,7 +242,7 @@ const commands = [
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [ "438296397452935169" ]),
-    
+
     // resetCount
     new Command("patterns/counting", "resetCount", "resets the current count", function(message, parameters) {
         resetNumber(message, 'reset the count!', '✅');
@@ -232,12 +266,12 @@ const commands = [
         chain.autoChain = parameters["howMany"];
         message.reply(`autoChain is now ${chain.autoChain}.`);
     }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
-    
+
     // kill
     new Command("bot", "kill", "kills the bot", function(message, parameters) {
         message.channel.send('bot is now dead 😢');
         client.destroy();
-    }, [], 
+    }, [],
     [
         "438296397452935169",
         "705120334705197076",
@@ -257,11 +291,11 @@ const count = {
 // chain variables
 const chain = {
     channel      : "", //
-    currentChain : "", // 
-    chainAmount  : 0,  // 
-    prevChain    : "", // 
-    lastChainer  : "", // 
-    autoChain    : 0,  // 
+    currentChain : "", //
+    chainAmount  : 0,  //
+    prevChain    : "", //
+    lastChainer  : "", //
+    autoChain    : 0,  //
     chainFunc    : function(message, inRow) {
         console.log(this);
         console.log("first " + inRow);
@@ -364,7 +398,7 @@ client.once(Events.ClientReady, c => {
     //     runQueries(db);
     // });
 	console.info(`Ready! Logged in as ${c.user.tag}`);
-    
+
     // try {
     //     saveData = JSON.parse(fs.readFileSync('./save-data.json', 'utf8')); // Load save data
     // } catch(e) {
@@ -385,7 +419,8 @@ client.on(Events.MessageCreate, async message => {
                 // parameter stuff
                 let paramObj = {};
                 const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
-                if (message.content.split(' ')[1] !== null) {
+                let tempParameters;
+                if (Boolean(message.content.split(' ')[1])) {
                     let sections = message.content.split('"');
                     if (message.content.includes('"')) {
                         for (let i = 0; i < sections.length; i++) {
@@ -394,45 +429,53 @@ client.on(Events.MessageCreate, async message => {
                             }
                         }
                     }
-                    let tempParameters = sections.join('').split(' ');
+                    tempParameters = sections.join('').split(' ');
                     tempParameters.shift();
 
                     let j = 0;
                     for (let i = 0; i < tempParameters.length; i++) {
                         // god i miss conditional statements
-                        function convParam(param) {
+                        function convParam(param, content) {
                             switch ((typeof param.preset).toLowerCase()) {
-                                case "string": return String(tempParameters[i]);
-                                case "number": return Number(tempParameters[i]);
-                                case "boolean": return (tempParameters[i].toLowerCase() == "true") ? true : false;
-                                default: throw "Unsupported type";
+                                case "string": return String(content);
+                                case "number": return Number(content);
+                                case "boolean": return (content.toLowerCase() == "true") ? true : false;
+                                default: 
+                                console.error("uh oh!! that's not real.")
+                                return undefined;
                             }
                         }
                         // convert parameter back to spaces
                         if (tempParameters[i].includes(space)) {
                             tempParameters[i] = tempParameters[i].split(space).join(' ');
                         }
-                        // try using Array.find instead of Array.forEach, just want this code to work rn (should break when it finds an element)
-                        if (tempParameters[i].includes(':') && com.params.forEach(x => x.name === tempParameters[i].split(':')[0])) {
-                            paramObj[tempParameters[i].split(':')[0]] = convParam(com.params[i]) ?? com.params[i].preset;
+                        
+                        
+                        if (tempParameters[i].includes(':')) {
+                            let halves = tempParameters[i].split(':');
+                            let param = com.params.find(x => x.name === halves[0]);
+                            
+                            if (Boolean(param)) {
+                                paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
+                            }
                         } else {
-                            paramObj[com.params[j].name] = convParam(com.params[j]);
+                            paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
                             j++;
                         }
                     }
                 }
-                
+
                 // if parameter is not set, use the preset
                 com.params.forEach(x => {
                     if (!paramObj.hasOwnProperty(x.name)) {
                         paramObj[x.name] = x.preset;
                     }
                 });
-                
+
                 try {
                     com.func(message, paramObj);
                 } catch (error) {
-                    message.replyTo(error);    
+                    message.replyTo(error);
                 }
             } else {
                 await message.replyTo('hey, you can\'t use this command!');
@@ -440,10 +483,10 @@ client.on(Events.MessageCreate, async message => {
             return;
         }
     }
-    
+
     if (message.channel.id === count.channel) {
         var num = 0;
-        
+
         var content = String(wordsToNumbers(message.content));
 
         var matches = content.match('|');
@@ -467,7 +510,7 @@ client.on(Events.MessageCreate, async message => {
             resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
             return;
         }
-        
+
         if (num == count.currentNum + 1) {
             message.react('✅');
             count.lastCounter = message.author.id;

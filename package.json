@@ -15,6 +15,7 @@
     "fs": "^0.0.1-security",
     "keyv": "^4.5.3",
     "mathjs": "^11.10.0",
+    "node-scp": "^0.0.23",
     "sqlite": "^5.0.1",
     "sqlite3": "^5.1.6",
     "words-to-numbers": "^1.5.1"
