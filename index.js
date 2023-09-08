@@ -16,7 +16,7 @@ var remote_server = {
     host: '150.230.169.222', // host ip
     port: 22, //port used for scp
     username: 'opc', //username to authenticate
-    privateKey: fs.readFileSync('./ssh.key'),
+    //privateKey: fs.readFileSync('./ssh.key'),
 }
 
 var jermaFiles;
@@ -40,6 +40,8 @@ usetube.getPlaylistVideos('PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj')
 const persistPath = "./persistence/persist.db";
 const usersPath   = "./persistence/users.db";
 var db;
+
+const allTimeouts = [];
 
 // Create a new client instance
 const client = new Client({
@@ -85,16 +87,17 @@ Message.prototype.replyTo = function(reply, ping = true) {
 
 function sleep(ms) {
     return new Promise((resolve) => {
-        setTimeout(resolve, ms);
+        allTimeouts.push(setTimeout(resolve, ms));
     });
 }
 
 // typeFrom will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
 // for now it defaults to milliseconds
 function convertTime(time, typeTo, typeFrom = 'ms') {
-    typeFrom = typeToNum(typeFrom);
-    typeTo = typeToNum(typeTo);
-    function typeToNum(from){
+    let typeFromNum = typeNum(typeFrom);
+    let typeToNum = typeNum(typeTo)
+    let newTime = time;
+    function typeNum(from){
         switch (from) {
             case 's': return 1;
             case 'm': return 2;
@@ -103,28 +106,22 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
             default:  return 0;
         }
     }
-    if (typeFrom === typeTo) return time;
-    if (typeTo < typeFrom) {
-        switch (true) {
-            case typeTo <= 0: // ms, don't do anything
-            case typeTo <= 1: time /= 1000;
-            case typeTo <= 2: time /= 60;
-            case typeTo <= 3: time /= 60;
-            case typeTo <= 4: time /= 24;
-            break;
-        }
-    } else {
-        switch (true) {
-            case typeTo >= 4: // days, don't do anything
-            case typeTo >= 3: time *= 24;
-            case typeTo >= 2: time *= 60;
-            case typeTo >= 1: time *= 60;
-            case typeTo >= 0: time *= 1000;
-            break;
+
+    if (typeFromNum === typeTo) return time;
+    
+    let toMax = Math.max(typeToNum, typeFromNum) === typeToNum;
+    console.log(toMax);
+    for (let i = (toMax ? typeFromNum : typeToNum); i < toMax ? typeToNum : typeFromNum; (toMax ? i++ : i--)) {
+        if (i === 0) {
+            newTime = toMax ? (newTime * 1000) : (newTime / 1000);
+        } else if (i === 1 || i === 2) {
+            newTime = toMax ? (newTime * 60) : (newTime / 60);
+        } else if (i === 3) {
+            newTime = toMax ? (newTime * 24) : (newTime / 24);
         }
     }
-    console.log(`currently waiting for ${time} ${typeTo}`);
-    return time;
+    console.log(`currently waiting for ${time} ${typeTo} (${newTime} ${typeFrom})`);
+    return newTime;
 }
 
 class Command {
@@ -209,7 +206,7 @@ const commands = [
     // echo
     new Command("general/fun", "echo", "echoes whatever's in front of it", async function(message, parameters) {
         try {
-            await sleep(parameters["waitValue"]);
+            await sleep(convertTime(parameters["waitValue"], parameters["waitType"], 'ms'));
             message.channel.send(parameters["reply"]);
             if (parameters["delete"]) message.delete();
         } catch (error) {
@@ -391,7 +388,7 @@ async function resetNumber(message, reply = 'empty. astrl screwed up lol', react
     count.lastCounter = '';
     count.prevNumber = count.currentNum;
     count.currentNum = 0;
-    message.react(react);
+    await message.react(react);
     await message.replyTo(reply);
 }
 
