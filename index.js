@@ -16,7 +16,7 @@ var remote_server = {
     host: '150.230.169.222', // host ip
     port: 22, //port used for scp
     username: 'opc', //username to authenticate
-    privateKey: './ssh.key',
+    privateKey: fs.readFileSync('./ssh.key'),
 }
 
 var jermaFiles;
@@ -35,6 +35,7 @@ usetube.getPlaylistVideos('PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj')
         console.log(jermaClips);
         Object.freeze(jermaClips);
     }).catch(error => console.log(error));
+
 
 const persistPath = "./persistence/persist.db";
 const usersPath   = "./persistence/users.db";
@@ -82,6 +83,50 @@ Message.prototype.replyTo = function(reply, ping = true) {
     }
 };
 
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+// typeFrom will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
+// for now it defaults to milliseconds
+function convertTime(time, typeTo, typeFrom = 'ms') {
+    typeFrom = typeToNum(typeFrom);
+    typeTo = typeToNum(typeTo);
+    function typeToNum(from){
+        switch (from) {
+            case 's': return 1;
+            case 'm': return 2;
+            case 'h': return 3;
+            case 'd': return 4;
+            default:  return 0;
+        }
+    }
+    if (typeFrom === typeTo) return time;
+    if (typeTo < typeFrom) {
+        switch (true) {
+            case typeTo <= 0: // ms, don't do anything
+            case typeTo <= 1: time /= 1000;
+            case typeTo <= 2: time /= 60;
+            case typeTo <= 3: time /= 60;
+            case typeTo <= 4: time /= 24;
+            break;
+        }
+    } else {
+        switch (true) {
+            case typeTo >= 4: // days, don't do anything
+            case typeTo >= 3: time *= 24;
+            case typeTo >= 2: time *= 60;
+            case typeTo >= 1: time *= 60;
+            case typeTo >= 0: time *= 1000;
+            break;
+        }
+    }
+    console.log(`currently waiting for ${time} ${typeTo}`);
+    return time;
+}
+
 class Command {
     constructor(genre, commandName, desc, func, params = [], limitedTo = []) {
         this.genre = genre;
@@ -103,7 +148,7 @@ class Param {
 
 const commands = [
     //help
-    new Command("bot/support", "help", "lists all commands", function(message, parameters) {
+    new Command("bot/support", "help", "lists all commands", async function(message, parameters) {
         let response = "";
         function addToHelp(com) {
             response += `$${com.commandName} (`;
@@ -125,10 +170,10 @@ const commands = [
                 commands.forEach(x => addToHelp(x));
             }
         } catch (error) {
-            message.reply(`${parameters["whichCommand"]} is NOT a command. try again :/`)
+            message.replyTo(`${parameters["whichCommand"]} is NOT a command. try again :/`)
         }
 
-        message.reply(response);
+        message.replyTo(response);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
@@ -136,27 +181,25 @@ const commands = [
     ], []),
 
     //eval
-    new Command("general/fun", "math", "does the math put in front of it", function(message, parameters) {
-        var math = '';
+    new Command("general/fun", "math", "does the math put in front of it", async function(message, parameters) {
         try {
-            math = evaluate(parameters["equation"]);
+            message.replyTo(String(evaluate(parameters["equation"])));
         } catch (error) {
-            math = error;
+            message.replyTo(error);
         }
-        if (parameters["return"]) message.reply(String(math));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
     ], []),
 
     // run
-    new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", function(message, parameters) {
+    new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", async function(message, parameters) {
         try {
             let code = eval(parameters["code"]);
             if (parameters["return"]) {
-                message.reply(String(code));
+                message.replyTo(String(code));
             }
         } catch (error) {
-            message.reply(String(error));
+            message.replyTo(String(error));
         }
     }, [
         new Param("code", "the code to run", ""),
@@ -164,24 +207,27 @@ const commands = [
     ], [ "438296397452935169" ]),
 
     // echo
-    new Command("general/fun", "echo", "echoes whatever's in front of it", function(message, parameters) {
+    new Command("general/fun", "echo", "echoes whatever's in front of it", async function(message, parameters) {
         try {
+            await sleep(parameters["waitValue"]);
             message.channel.send(parameters["reply"]);
+            if (parameters["delete"]) message.delete();
         } catch (error) {
             message.channel.send(error);
         }
     }, [
         new Param("reply", "the message to echo back to you", "..."),
+        new Param("waitValue", "the time it will take to echo back your message", 0),
+        new Param("waitType", "i.e ms (milliseconds), s (seconds), m (minutes)", 's'),
+        new Param("delete", "deletes message after sending", false),
     ], []),
 
     // mock
     new Command("general/fun", "mock", "mocks text/whoever you reply to", async function(message, parameters) {
         try {
-            await message.fetchReference()
-            .then(x => {
-                mockFunc(x, x.content);
-                message.delete();
-            });
+            let reference = await message.fetchReference();
+            mockFunc(reference, reference.content);
+            message.delete();
         } catch (error) {
             mockFunc(message, parameters["reply"])
         }
@@ -200,11 +246,11 @@ const commands = [
                 // }
                 mock.push(vary ? content[i].toLowerCase() : content[i].toUpperCase());
             }
-            reply(reply, mock.join(''));
+            reply.replyTo(mock.join(''));
         }
     }, [
-        new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
         new Param("reply", "the message to mock", "..."),
+        new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
     ], []),
 
     // jerma
@@ -215,11 +261,9 @@ const commands = [
                 scp.Client(remote_server)
                     .then(client => {
                         message.react('✅');
-                        let result;
-                        let index;
                         
-                        result = `./temp/${parameters["fileName"]}.mp3`;
-                        index = Math.round(Math.random() * jermaFiles.length - 1);
+                        let result = `./temp/${parameters["fileName"]}.mp3`;
+                        let index = Math.round(Math.random() * jermaFiles.length - 1);
                         client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result)
                             .then(response => {
                                 message.channel.send({ files: [result] });
@@ -247,7 +291,7 @@ const commands = [
     }, [
         new Param("fileType", "the type of jerma file (INITIALIZATION ONLY)", 0),
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
-    ], [ "438296397452935169" ]),
+    ], []),
 
     // countHere
     new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", async function(message, parameters) {
@@ -263,7 +307,7 @@ const commands = [
     ], [ "438296397452935169" ]),
 
     // resetCount
-    new Command("patterns/counting", "resetCount", "resets the current count", function(message, parameters) {
+    new Command("patterns/counting", "resetCount", "resets the current count", async function(message, parameters) {
         resetNumber(message, 'reset the count!', '✅');
     }, [], [ "438296397452935169" ]),
 
@@ -281,13 +325,13 @@ const commands = [
     ], [ "438296397452935169" ]),
 
     // autoChain
-    new Command("patterns/chaining", "autoChain", "will let any channel start a chain", function(message, parameters) {
+    new Command("patterns/chaining", "autoChain", "will let any channel start a chain", async function(message, parameters) {
         chain.autoChain = parameters["howMany"];
-        message.reply(`autoChain is now ${chain.autoChain}.`);
+        message.replyTo(`autoChain is now ${chain.autoChain}.`);
     }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
 
     // kill
-    new Command("bot", "kill", "kills the bot", function(message, parameters) {
+    new Command("bot", "kill", "kills the bot", async function(message, parameters) {
         message.channel.send('bot is now dead 😢');
         client.destroy();
     }, [],
@@ -452,7 +496,7 @@ client.on(Events.MessageCreate, async message => {
                     tempParameters.shift();
 
                     let j = 0;
-                    for (let i = 0; i < tempParameters.length; i++) {
+                    for (let i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
                         // god i miss conditional statements
                         function convParam(param, content) {
                             switch ((typeof param.preset).toLowerCase()) {
@@ -464,12 +508,11 @@ client.on(Events.MessageCreate, async message => {
                                 return undefined;
                             }
                         }
-                        // convert parameter back to spaces
+                        // convert parameter back to spaces, if it needs them
                         if (tempParameters[i].includes(space)) {
                             tempParameters[i] = tempParameters[i].split(space).join(' ');
                         }
-                        
-                        
+                        // decides if the current param is being manually set or not, and assigns the paramObj accordingly
                         if (tempParameters[i].includes(':')) {
                             let halves = tempParameters[i].split(':');
                             let param = com.params.find(x => x.name === halves[0]);
