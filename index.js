@@ -1,74 +1,51 @@
 // Require the necessary discord.js classes
-const { Client, Events, GatewayIntentBits, Message } = require('discord.js');
-const { globalPrefix, token } = require('./config.json');
-const { wordsToNumbers } = require('words-to-numbers');
-const { evaluate } = require('mathjs');
-const { Database, OPEN_READWRITE } = require('sqlite3');
-const Keyv = require('keyv');
-const keyv = new Keyv({ serialize: JSON.stringify, deserialize: JSON.parse });
-//const prefixes = new Keyv('sqlite://path/to.sqlite');
+const bigData = require('./bigData.json');
+const process = require('node:process');
+const config = require('./config.json');
+const discord = require('discord.js');
 const scp = require('node-scp');
 const fs = require('fs');
-const usetube = require('usetube')
-const path = require("path");
+const { wordsToNumbers } = require('words-to-numbers');
+const { authenticate } = require('youtube-api');
+const { google } = require('googleapis');
+const { evaluate } = require('mathjs');
 
-var remote_server = {
-    host: '150.230.169.222', // host ip
-    port: 22, //port used for scp
-    username: 'opc', //username to authenticate
-    //privateKey: fs.readFileSync('./ssh.key'),
-}
-
-var jermaFiles;
-scp.Client(remote_server)
-    .then(client => {
-        client.list('/home/opc/mediaHosting/jermaSFX/').then(x => {
-            jermaFiles = x;
-            Object.freeze(jermaFiles);
-        });
-    }).catch(error => console.log(error));
-
-var jermaClips;
-usetube.getPlaylistVideos('PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj')
-    .then(x => {
-        jermaClips = x;
-        console.log(jermaClips);
-        Object.freeze(jermaClips);
-    }).catch(error => console.log(error));
-
-
-const persistPath = "./persistence/persist.db";
-const usersPath   = "./persistence/users.db";
-var db;
-
-const allTimeouts = [];
-
-// Create a new client instance
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildModeration,
-        GatewayIntentBits.GuildEmojisAndStickers,
-        GatewayIntentBits.GuildIntegrations,
-        GatewayIntentBits.GuildWebhooks,
-        GatewayIntentBits.GuildInvites,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildPresences,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildMessageTyping,
-        GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.DirectMessageReactions,
-        GatewayIntentBits.DirectMessageTyping,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildScheduledEvents,
-        GatewayIntentBits.AutoModerationConfiguration,
-        GatewayIntentBits.AutoModerationExecution
-    ]
+// create a new discord client instance
+const client = new discord.Client({
+    intents: Array.from(bigData.intents, x => eval(x))
 });
 
-String.prototype.insert = function(index, string) {
+// scp client, currently just for grabbing
+var remote_server = {
+    host: '150.230.169.222',
+    port: 22,
+    username: 'opc',
+    privateKey: fs.readFileSync('./ssh.key'),
+}
+
+// function for declaring global const variables at startup
+async function awaitPromise(func) {
+    let result = await func;
+    return result;
+}
+
+// arrays containing a ton of information that would be very wasteful to get every time it's needed
+const jermaFiles = awaitPromise(function() {
+    scp.Client(remote_server)
+    .then(client => client.list('/home/opc/mediaHosting/jermaSFX/'))
+    .catch(error => console.log(error))
+});
+const jermaClips = awaitPromise(function() {
+    google.youtube('v3').playlistItems.list({
+        auth: authenticate({ key: config.ytApiKey, type: "key" }),
+        part: [ 'id', 'snippet' ], playlistId: 'PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj', maxResults: 500,
+    })
+});
+
+// used to reinstate timeouts when the bot is restarted
+const allTimeouts = [];
+
+String.prototype.insert = function (index, string) {
     if (index > 0) {
         return this.substring(0, index) + string + this.substring(index, this.length);
     }
@@ -76,7 +53,7 @@ String.prototype.insert = function(index, string) {
     return string + this;
 };
 
-Message.prototype.replyTo = function(reply, ping = true) {
+discord.Message.prototype.replyTo = function (reply, ping = true) {
     try {
         reply = reply.toString();
         return this.reply({ content: reply, allowedMentions: { repliedUser: ping } });
@@ -85,10 +62,57 @@ Message.prototype.replyTo = function(reply, ping = true) {
     }
 };
 
-function sleep(ms) {
+function sleep(ms, name, push = true) {
     return new Promise((resolve) => {
-        allTimeouts.push(setTimeout(resolve, ms));
+        let t = setTimeout(resolve, ms);
+        if (push) allTimeouts.push({ 
+            timeout : t, 
+            startTime : Date.now(),
+            name : name,
+        });
     });
+}
+
+async function autoSave() {
+    await sleep(60000, false);
+    console.log("Autosaving...");
+    save().catch(error => console.error("Autosave failed!  \n" + error));
+    autoSave();
+}
+
+async function save() {
+    fs.writeFile("./persistence/users.json", JSON.stringify({
+        count : count,
+        chain : chain,
+        // timeouts : allTimeouts,
+    }), function(err) {
+        if (err) return console.error(err);
+        
+        let date = new Date();
+        let time = date.getHours() + ":" + date.getMinutes() + ":" +date.getSeconds()
+        console.info(`The file was saved! (${time})`);
+    });
+}
+
+async function load() {
+    fs.readFile("./persistence/users.json", 'utf-8', async function(err, data) {
+        try {
+            let dataObj = JSON.parse(data);
+            count = dataObj.count;
+            chain = dataObj.chain;
+            if (allTimeouts.length)
+
+            console.info("The file was loaded!");
+        } catch (error) {
+            console.error(error);
+        }
+    }); 
+}
+
+async function kill() {
+    await save();
+    await client.destroy();
+    process.exit();
 }
 
 // typeFrom will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
@@ -97,18 +121,18 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
     let typeFromNum = typeNum(typeFrom);
     let typeToNum = typeNum(typeTo)
     let newTime = time;
-    function typeNum(from){
+    function typeNum(from) {
         switch (from) {
             case 's': return 1;
             case 'm': return 2;
             case 'h': return 3;
             case 'd': return 4;
-            default:  return 0;
+            default: return 0;
         }
     }
 
     if (typeFromNum === typeTo) return time;
-    
+
     let toMax = Math.max(typeToNum, typeFromNum) === typeToNum;
     console.log(toMax);
     for (let i = (toMax ? typeFromNum : typeToNum); i < toMax ? typeToNum : typeFromNum; (toMax ? i++ : i--)) {
@@ -145,7 +169,7 @@ class Param {
 
 const commands = [
     //help
-    new Command("bot/support", "help", "lists all commands", async function(message, parameters) {
+    new Command("bot/support", "help", "lists all commands", async function (message, parameters) {
         let response = "";
         function addToHelp(com) {
             response += `$${com.commandName} (`;
@@ -161,7 +185,7 @@ const commands = [
             }
         }
         try {
-            if (Boolean(parameters["whichCommand"])) {
+            if (parameters["whichCommand"]) {
                 addToHelp(commands.find(x => x.commandName === parameters["whichCommand"]));
             } else {
                 commands.forEach(x => addToHelp(x));
@@ -178,7 +202,7 @@ const commands = [
     ], []),
 
     //eval
-    new Command("general/fun", "math", "does the math put in front of it", async function(message, parameters) {
+    new Command("general/fun", "math", "does the math put in front of it", async function (message, parameters) {
         try {
             message.replyTo(String(evaluate(parameters["equation"])));
         } catch (error) {
@@ -189,10 +213,20 @@ const commands = [
     ], []),
 
     // run
-    new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", async function(message, parameters) {
+    new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", async function (message, parameters) {
         try {
-            let code = eval(parameters["code"]);
-            if (parameters["return"]) {
+            let code = eval(parameters["code"])
+            if (code.toString() === '[object Promise]') {
+                code.then(result => {
+                    if (parameters["return"]) {
+                        if (result.toString().length <= 4000) {
+                            message.replyTo(String(result));
+                        } else {
+                            message.replyTo("the result was too long to display, but the code was still ran.");
+                        }
+                    }
+                });
+            } else if (code) {
                 message.replyTo(String(code));
             }
         } catch (error) {
@@ -201,10 +235,10 @@ const commands = [
     }, [
         new Param("code", "the code to run", ""),
         new Param("return", "should the ", true),
-    ], [ "438296397452935169" ]),
+    ], ["438296397452935169"]),
 
     // echo
-    new Command("general/fun", "echo", "echoes whatever's in front of it", async function(message, parameters) {
+    new Command("general/fun", "echo", "echoes whatever's in front of it", async function (message, parameters) {
         try {
             await sleep(convertTime(parameters["waitValue"], parameters["waitType"], 'ms'));
             message.channel.send(parameters["reply"]);
@@ -220,7 +254,7 @@ const commands = [
     ], []),
 
     // mock
-    new Command("general/fun", "mock", "mocks text/whoever you reply to", async function(message, parameters) {
+    new Command("general/fun", "mock", "mocks text/whoever you reply to", async function (message, parameters) {
         try {
             let reference = await message.fetchReference();
             mockFunc(reference, reference.content);
@@ -250,15 +284,24 @@ const commands = [
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
     ], []),
 
+    // mock
+    new Command("general/fun", "true", "<:true:1149936632468885555>", async function (message, parameters) {
+        let reference = await message.fetchReference();
+        for (let i = 0; i < Math.min(parameters["amount"], bigData.trueEmojis.length); i++) {
+            await reference.react(bigData.trueEmojis[i]);
+        }
+    }, [
+        new Param("amount", `the amount you agree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
+    ], []),
+
     // jerma
-    new Command("general/fun", "jerma", "sets the current channel to be the channel used for counting", async function(message, parameters) {
-        console.log(parameters["fileType"]);
+    new Command("general/fun", "jerma", "sets the current channel to be the channel used for counting", async function (message, parameters) {
         switch (parameters["fileType"]) {
             case 0:
                 scp.Client(remote_server)
                     .then(client => {
                         message.react('✅');
-                        
+
                         let result = `./temp/${parameters["fileName"]}.mp3`;
                         let index = Math.round(Math.random() * jermaFiles.length - 1);
                         client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result)
@@ -266,22 +309,20 @@ const commands = [
                                 message.channel.send({ files: [result] });
                                 client.close();
                             }).catch(error => console.log(error));
-                        }
+                    }
                     ).catch(error => console.log(error));
                 break;
             case 1:
-                //index = Math.round(Math.random() * jermaClips.length - 1);
-                console.log(jermaClips[0]);
-                //message.replyTo(`https://youtu.be/${jermaClips[index].id}`)
+                index = Math.round(Math.random() * jermaClips.length - 1);
+                message.replyTo(`[${jermaClips[index].title}](https://www.youtube.com/watch?v=${jermaClips[index].resourceId.videoId})`);
                 break;
             default:
                 message.replyTo(`type "${parameters["fileType"]}" not supported!`);
                 break;
         }
-        
 
-        function err(message, error)
-        {
+
+        function err(message, error) {
             message.react('✅');
             console.log(error);
         }
@@ -291,26 +332,26 @@ const commands = [
     ], []),
 
     // countHere
-    new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", async function(message, parameters) {
-        let channelId = parameters?.["channel"] ?? message.channel.id;
+    new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", async function (message, parameters) {
+        let channelId = parameters["channel"] ? parameters["channel"] : message.channel.id;
         let isChannel = count.channel === channelId;
 
         count.channel = isChannel ? "" : channelId;
         await client.channels.fetch(channelId)
             .then(x => x.send(isChannel ? 'counting in this channel has ceased.' : 'alright. start counting then.'))
-            .catch(e => message.replyTo(e));
+            .catch(err => console.error(err));
     }, [
         new Param("channel", "the specific channel to start counting in", "")
-    ], [ "438296397452935169" ]),
+    ], ["438296397452935169"]),
 
     // resetCount
-    new Command("patterns/counting", "resetCount", "resets the current count", async function(message, parameters) {
+    new Command("patterns/counting", "resetCount", "resets the current count", async function (message, parameters) {
         resetNumber(message, 'reset the count!', '✅');
-    }, [], [ "438296397452935169" ]),
+    }, [], ["438296397452935169"]),
 
     // chainHere
-    new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", async function(message, parameters) {
-        let channelId = parameters?.["channel"] ?? message.channel.id;
+    new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", async function (message, parameters) {
+        let channelId = parameters["channel"] ? parameters["channel"] : message.channel.id;
         let isChannel = chain.channel === channelId;
 
         chain.channel = isChannel ? "" : channelId;
@@ -319,18 +360,18 @@ const commands = [
             .catch(e => message.replyTo(e));
     }, [
         new Param("channel", "the specific channel to start counting in", "")
-    ], [ "438296397452935169" ]),
+    ], ["438296397452935169"]),
 
     // autoChain
-    new Command("patterns/chaining", "autoChain", "will let any channel start a chain", async function(message, parameters) {
+    new Command("patterns/chaining", "autoChain", "will let any channel start a chain", async function (message, parameters) {
         chain.autoChain = parameters["howMany"];
         message.replyTo(`autoChain is now ${chain.autoChain}.`);
-    }, [ new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4) ], [ "438296397452935169" ]),
+    }, [new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)], ["438296397452935169"]),
 
     // kill
-    new Command("bot", "kill", "kills the bot", async function(message, parameters) {
-        message.channel.send('bot is now dead 😢');
-        client.destroy();
+    new Command("bot", "kill", "kills the bot", async function (message, parameters) {
+        await message.channel.send('bot is now dead 😢');
+        await kill();
     }, [],
     [
         "438296397452935169",
@@ -340,50 +381,37 @@ const commands = [
 ];
 
 // counting variables
-const count = {
-    channel     : "",
-    currentNum  : 0,  // the last number said that was correct
-    prevNumber  : 0,  // used to reset back to the last number if i messed up my code
-    highestNum  : 0,  // the highest number ever gotten to
-    lastCounter : "", // used to check for duplicates
+var count = {
+    channel: "",
+    currentNum: 0,  // the last number said that was correct
+    prevNumber: 0,  // used to reset back to the last number if i messed up my code
+    highestNum: 0,  // the highest number ever gotten to
+    lastCounter: "", // used to check for duplicates
 }
 
 // chain variables
-const chain = {
-    channel      : "", //
-    currentChain : "", //
-    chainAmount  : 0,  //
-    prevChain    : "", //
-    lastChainer  : "", //
-    autoChain    : 0,  //
-    chainFunc    : function(message, inRow) {
-        console.log(this);
-        console.log("first " + inRow);
-        if (!this.currentChain) {
-            this.currentChain = message.content.toLowerCase();
-            this.chainAmount = 1;
-            return;
-        }
-        if (message.content.toLowerCase() === this.currentChain && this.lastChainer !== message.author.id) {
-            this.chainAmount++;
-            if (this.chainAmount >= inRow) message.react('⛓️');
-        } else {
-            if (this.chainAmount >= inRow) message.react('💔');
-            this.prevChain = this.currentChain;
-            this.currentChain = message.content.toLowerCase();
-            this.chainAmount = 1;
-        }
-        this.lastChainer = message.author.id;
-        console.log(this);
-        console.log(inRow);
-    }
+var chain = {
+    channel: "", //
+    currentChain: "", //
+    chainAmount: 0,  //
+    prevChain: "", //
+    lastChainer: "", //
+    autoChain: 0,  //
 }
+
+const counts = {};
+const chains = {};
+
+const users = {};
 
 // blacklist list, the function to push to it will be blacklist()
 const bl = [];
 
-async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀')
-{
+process.on('SIGINT', async () => {
+    await kill();
+});
+
+async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀') {
     if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
     count.lastCounter = '';
     count.prevNumber = count.currentNum;
@@ -392,89 +420,46 @@ async function resetNumber(message, reply = 'empty. astrl screwed up lol', react
     await message.replyTo(reply);
 }
 
-// keyv stuff
-keyv.on('error', err => console.error('Keyv connection error:', err));
-
-function createDatabase() {
-    var newdb = new Database(persistPath, (err) => {
-        if (err) {
-            console.error("Getting error " + err);
-            exit(1);
-        }
-        createTables(newdb);
-    });
-}
-
-function createTables(newdb) {
-    newdb.exec(`
-    create table user (
-        user_id text primary key not null,
-        user_name text not null,
-        count_screws int not null,
-        chain_screws int not null,
-    );
-    insert into user (user_id, user_name, count_screws, chain_screws)
-        values (1, 'Spiderman', 'N', 'Y'),
-               (2, 'Tony Stark', 'N', 'N'),
-               (3, 'Jean Grey', 'Y', 'N');
-
-    create table hero_power (
-        hero_id int not null,
-        hero_power text not null
-    );
-
-    insert into hero_power (hero_id, hero_power)
-        values (1, 'Web Slinging'),
-               (1, 'Super Strength'),
-               (1, 'Total Nerd'),
-               (2, 'Total Nerd'),
-               (3, 'Telepathic Manipulation'),
-               (3, 'Astral Projection');
-        `, ()  => {
-            runQueries(newdb);
-    });
-}
-
-function runQueries(db) {
-    db.all(`select hero_name, is_xman, was_snapped from hero h
-   inner join hero_power hp on h.hero_id = hp.hero_id
-   where hero_power = ?`, "Total Nerd", (err, rows) => {
-        rows.forEach(row => {
-            console.info(row.hero_name + "\t" +row.is_xman + "\t" +row.was_snapped);
-        });
-    });
+function chainFunc(message, inRow) {
+    console.log("first " + inRow);
+    if (!chain.currentChain) {
+        chain.currentChain = message.content.toLowerCase();
+        chain.chainAmount = 1;
+        return;
+    }
+    if (message.content.toLowerCase() === chain.currentChain && chain.lastChainer !== message.author.id) {
+        chain.chainAmount++;
+        if (chain.chainAmount >= inRow) message.react('⛓️');
+    } else {
+        if (chain.chainAmount >= inRow) message.react('💔');
+        chain.prevChain = chain.currentChain;
+        chain.currentChain = message.content.toLowerCase();
+        chain.chainAmount = 1;
+    }
+    chain.lastChainer = message.author.id;
+    console.log(chain);
+    console.log(inRow);
 }
 
 // when the client is ready, run this code
-client.once(Events.ClientReady, c => {
-    // new Database(persistPath, OPEN_READWRITE, (err) => {
-    //     if (err && err.code == "SQLITE_CANTOPEN") {
-    //         createDatabase();
-    //         return;
-    //     } else if (err) {
-    //         console.log("Getting error " + err);
-    //         exit(1);
-    //     }
-    //     runQueries(db);
-    // });
-	console.info(`Ready! Logged in as ${c.user.tag}`);
-
-    // try {
-    //     saveData = JSON.parse(fs.readFileSync('./save-data.json', 'utf8')); // Load save data
-    // } catch(e) {
-    //     // Init if no save data found
-    //     saveData = new SaveData();
-    // }
+client.once(discord.Events.ClientReady, async c => {
+    console.info(`Ready! Logged in as ${c.user.tag}`);
+    await load();
+    autoSave();
 });
 
-client.on(Events.MessageCreate, async message => {
+client.on(discord.Events.MessageCreate, async message => {
+    // if (!counts || !chains) {
+    //     counts[message.guildId] = ;
+    //     chains[message.guildId] = ;
+    // }
     if (message.author.bot) return;
     let cont = message.content;
 
     for (let i = 0; i < commands.length; i++) {
         let com = commands[i];
 
-        if (("$"+com.commandName.toLowerCase()) === message.content.split(' ')[0].toLowerCase()) {
+        if (("$" + com.commandName.toLowerCase()) === message.content.split(' ')[0].toLowerCase()) {
             if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
                 // parameter stuff
                 let paramObj = {};
@@ -500,9 +485,9 @@ client.on(Events.MessageCreate, async message => {
                                 case "string": return String(content);
                                 case "number": return Number(content);
                                 case "boolean": return (content.toLowerCase() == "true") ? true : false;
-                                default: 
-                                console.error("uh oh!! that's not real.")
-                                return undefined;
+                                default:
+                                    console.error("uh oh!! that's not real.")
+                                    return undefined;
                             }
                         }
                         // convert parameter back to spaces, if it needs them
@@ -513,7 +498,7 @@ client.on(Events.MessageCreate, async message => {
                         if (tempParameters[i].includes(':')) {
                             let halves = tempParameters[i].split(':');
                             let param = com.params.find(x => x.name === halves[0]);
-                            
+
                             if (Boolean(param)) {
                                 paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
                             }
@@ -548,22 +533,13 @@ client.on(Events.MessageCreate, async message => {
 
         var content = String(wordsToNumbers(message.content));
 
-        var matches = content.match('|');
-        if (matches == undefined) {
-            matches = content.match('/\d+/');
-        }
         try {
-            num = evaluate(content.substring(0, matches[matches.length - 1]));
+            num = evaluate(content);
         } catch (error) {
-            if (!isNaN(content[0])) {
-                try {
-                    num = parseInt(content);
-                } catch (error) {
-                    message.replyTo('yeah that doesn\'t work. sorry \n' + error);
-                }
-            }
+            if (!isNaN(content[0])) console.error(error);
             return;
         }
+        
 
         if (count.lastCounter === message.author.id) {
             resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
@@ -581,11 +557,11 @@ client.on(Events.MessageCreate, async message => {
             );
         }
     } else if (message.channel.id === chain.channel) {
-        chain.chainFunc(message, 3);
+        chainFunc(message, 3);
     } else if (chain.autoChain >= 0) {
-        //chain.chainFunc(message, chain.autoChain);
+        //chainFunc(message, chain.autoChain);
     }
 });
 
 // Log in to Discord with your client's token
-client.login(token);
+client.login(config.token);

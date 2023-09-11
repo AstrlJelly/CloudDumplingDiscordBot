@@ -1,0 +1,46 @@
+{
+	"intents": [
+        "discord.GatewayIntentBits.Guilds",
+        "discord.GatewayIntentBits.GuildMembers",
+        "discord.GatewayIntentBits.GuildModeration",
+        "discord.GatewayIntentBits.GuildEmojisAndStickers",
+        "discord.GatewayIntentBits.GuildIntegrations",
+        "discord.GatewayIntentBits.GuildWebhooks",
+        "discord.GatewayIntentBits.GuildInvites",
+        "discord.GatewayIntentBits.GuildVoiceStates",
+        "discord.GatewayIntentBits.GuildPresences",
+        "discord.GatewayIntentBits.GuildMessages",
+        "discord.GatewayIntentBits.GuildMessageReactions",
+        "discord.GatewayIntentBits.GuildMessageTyping",
+        "discord.GatewayIntentBits.DirectMessages",
+        "discord.GatewayIntentBits.DirectMessageReactions",
+        "discord.GatewayIntentBits.DirectMessageTyping",
+        "discord.GatewayIntentBits.MessageContent",
+        "discord.GatewayIntentBits.GuildScheduledEvents",
+        "discord.GatewayIntentBits.AutoModerationConfiguration",
+        "discord.GatewayIntentBits.AutoModerationExecution"
+    ],
+	"trueEmojis": [
+		"<:true:1149936632468885555>",
+		"<:true:1149936634079494164>",
+		"<:true:1149936635153235988>",
+		"<:true:1149936635887222806>",
+		"<:true:1149936637686587414>",
+		"<:true:1149936639460782210>",
+		"<:true:1149936640878456872>",
+		"<:true:1149936644326182922>",
+		"<:true:1149936647585153054>",
+		"<:true:1149936651221618760>",
+		"<:true:1149936657877970975>",
+		"<:true:1149936657877970975>",
+		"<:true:1149936802027814923>",
+		"<:true:1149936805626531881>",
+		"<:true:1149936809107791872>",
+		"<:true:1149936812794597417>",
+		"<:true:1149936816074522674>",
+		"<:true:1149936819497082900>",
+		"<:true:1149936837679398963>",
+		"<:true:1149936840212758539>"
+	]
+	
+}

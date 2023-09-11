@@ -13,13 +13,17 @@
     "@keyv/sqlite": "^3.6.5",
     "discord.js": "^14.13.0",
     "fs": "^0.0.1-security",
+    "google-auth-library": "^9.0.0",
+    "googleapis": "^126.0.1",
     "keyv": "^4.5.3",
     "mathjs": "^11.10.0",
     "node-scp": "^0.0.23",
     "sqlite": "^5.0.1",
     "sqlite3": "^5.1.6",
     "usetube": "^2.2.7",
-    "words-to-numbers": "^1.5.1"
+    "words-to-numbers": "^1.5.1",
+    "youtube-api": "^3.0.1",
+    "youtube-playlist-info": "^0.1.0"
   },
   "devDependencies": {
     "eslint": "^8.48.0"

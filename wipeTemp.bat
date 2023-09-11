@@ -1,0 +1,1 @@
+del \\?\B:\!folders\GitHub\CloudDumplingDiscordBot\temp\*
