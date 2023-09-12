@@ -49,14 +49,15 @@ discord.Message.prototype.replyTo = function (reply, ping = true) {
 };
 
 function sleep(ms, name, push = true) {
+    var t;
     return new Promise((resolve) => {
-        var t = setTimeout(resolve, ms);
-        if (push) allTimeouts.push({ 
+        t = setTimeout(resolve, ms);
+        if (push) t = allTimeouts.push({ 
             timeout : t, 
             startTime : Date.now(),
             name : name,
         });
-    });
+    }).then(x => {if (push) allTimeouts.splice()});
 }
 
 async function autoSave() {
@@ -123,11 +124,12 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
 
     if (typeFromNum === typeTo) return time;
 
-    var toMax = Math.max(typeToNum, typeFromNum) === typeToNum;
+    var max = Math.max(typeToNum, typeFromNum);
+    var min = Math.min(typeToNum, typeFromNum);
+    var toMax = max === typeToNum;
     console.log(`typeFromNum : ${typeFromNum}, typeToNum : ${typeToNum}`);
-    for (var i = (toMax ? typeFromNum : typeToNum); i < toMax ? typeToNum : typeFromNum; (toMax ? i++ : i--)) {
-        console.log(toMax ? typeFromNum : typeToNum);
-        console.log(toMax ? typeToNum : typeFromNum);
+    for (var i = min; i < max; (toMax ? i++ : i--)) {
+        console.log(i);
         var num = i === 0 ? 1000 : (i === 1 || i === 2 ? 60 : 24);
         newTime = toMax ? (newTime * num) : (newTime / num);
     }
@@ -155,6 +157,185 @@ class Param {
 }
 
 const commandData = {};
+
+
+
+const _s = {
+    "default" : {
+        count : { // default counting variables
+            channel: "",
+            current: 0,      // the last number said that was correct
+            prevNumber: 0,   // used to reset back to the last number if i messed up my code
+            highestNum: 0,   // the highest number ever gotten to
+            lastCounter: "", // used to check for duplicates
+        },
+        
+        chain : { // default chain variables
+            channel: "",
+            current: "",     //
+            chainLength: 0,  //
+            prevChain: "",   // used to reset back to the last chain if i messed up my code
+            lastChainer: "", // used to check for duplicates
+            autoChain: 0,    // the amount of messages in any channel to start a chain
+        }
+    },
+};
+const _u = {};
+
+process.on('SIGINT', async () => {
+    await kill();
+});
+
+async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀') {
+    if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
+    count.lastCounter = '';
+    count.prevNumber = count.currentNum;
+    count.currentNum = 0;
+    await message.react(react);
+    await message.replyTo(reply);
+}
+
+function chainFunc(message, inRow) {
+    console.log("first " + inRow);
+    if (!chain.currentChain) {
+        chain.currentChain = message.content.toLowerCase();
+        chain.chainAmount = 1;
+        return;
+    }
+    if (message.content.toLowerCase() === chain.currentChain && chain.lastChainer !== message.author.id) {
+        chain.chainAmount++;
+        if (chain.chainAmount >= inRow) message.react('⛓️');
+    } else {
+        if (chain.chainAmount >= inRow) message.react('💔');
+        chain.prevChain = chain.currentChain;
+        chain.currentChain = message.content.toLowerCase();
+        chain.chainAmount = 1;
+    }
+    chain.lastChainer = message.author.id;
+    console.log(chain);
+    console.log(inRow);
+}
+
+// when the client is ready, run this code
+client.once(discord.Events.ClientReady, async c => {
+    console.info(`Ready! Logged in as ${c.user.tag}`);
+    await load();
+    autoSave();
+});
+
+client.on(discord.Events.MessageCreate, async message => {
+    // if (!counts || !chains) {
+    //     counts[message.guildId] = ;
+    //     chains[message.guildId] = ;
+    // }
+    if (message.author.bot) return;
+    var cont = message.content;
+
+    for (var i = 0; i < commands.length; i++) {
+        var com = commands[i];
+
+        if (("$" + com.commandName.toLowerCase()) === message.content.split(' ')[0].toLowerCase()) {
+            if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
+                // parameter stuff
+                var paramObj = {};
+                const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
+                var tempParameters;
+                if (Boolean(message.content.split(' ')[1])) {
+                    var sections = message.content.split('"');
+                    if (message.content.includes('"')) {
+                        for (var i = 0; i < sections.length; i++) {
+                            if (i % 2 == 1 && sections[i].includes(' ')) {
+                                sections[i] = sections[i].split(' ').join(space);
+                            }
+                        }
+                    }
+                    tempParameters = sections.join('').split(' ');
+                    tempParameters.shift();
+
+                    var j = 0;
+                    for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
+                        // god i miss conditional statements
+                        function convParam(param, content) {
+                            switch ((typeof param.preset).toLowerCase()) {
+                                case "string": return String(content);
+                                case "number": return Number(content);
+                                case "boolean": return (content.toLowerCase() == "true") ? true : false;
+                                default:
+                                    console.error("uh oh!! that's not real.")
+                                    return undefined;
+                            }
+                        }
+                        // convert space character back to actual spaces, if it needs them
+                        if (tempParameters[i].includes(space)) {
+                            tempParameters[i] = tempParameters[i].split(space).join(' ');
+                        }
+                        // decides if the current param is being manually set or not, and assigns the paramObj accordingly
+                        if (tempParameters[i].includes(':')) {
+                            var halves = tempParameters[i].split(':');
+                            var param = com.params.find(x => x.name === halves[0]);
+
+                            if (Boolean(param)) {
+                                paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
+                            }
+                        } else {
+                            paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
+                            j++;
+                        }
+                    }
+                }
+
+                // if parameter is not set, use the preset
+                com.params.forEach(x => {
+                    if (!paramObj.hasOwnProperty(x.name)) {
+                        paramObj[x.name] = x.preset;
+                    }
+                });
+
+                try {
+                    com.func(message, paramObj);
+                } catch (error) {
+                    message.replyTo(error, false);
+                }
+            } else {
+                await message.replyTo('hey, you can\'t use this command!');
+            }
+            return;
+        }
+    }
+
+    if (message.channel.id === count.channel) {
+        var num = 0;
+        var content = String(wordsToNumbers(message.content));
+
+        try {
+            num = evaluate(content);
+        } catch (error) {
+            if (!isNaN(content[0])) console.error(error);
+            return;
+        }
+        
+        if (count.lastCounter === message.author.id) {
+            resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
+            return;
+        }
+
+        if (num == count.currentNum + 1) {
+            message.react('✅');
+            count.lastCounter = message.author.id;
+            count.currentNum++;
+        } else {
+            resetNumber(message, (count.prevNumber < 10) ?
+                'you can do better than THAT...' :
+                'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
+            );
+        }
+    } else if (message.channel.id === chain.channel) {
+        chainFunc(message, 3);
+    } else if (chain.autoChain >= 0) {
+        //chainFunc(message, chain.autoChain);
+    }
+});
+
 const commands = [
     //help
     new Command("bot/support", "help", "lists all commands", async function (message, parameters) {
@@ -393,185 +574,6 @@ const commands = [
         "686222324860715014",
     ]),
 ];
-
-// counting variables
-let count = {
-    channel: "",
-    currentNum: 0,  // the last number said that was correct
-    prevNumber: 0,  // used to reset back to the last number if i messed up my code
-    highestNum: 0,  // the highest number ever gotten to
-    lastCounter: "", // used to check for duplicates
-}
-
-// chain variables
-let chain = {
-    channel: "", //
-    currentChain: "", //
-    chainAmount: 0,  //
-    prevChain: "", //
-    lastChainer: "", //
-    autoChain: 0,  //
-}
-
-const _s = {};
-const _u = {};
-
-// blacklist list, the function to push to it will be blacklist()
-const bl = [];
-
-process.on('SIGINT', async () => {
-    await kill();
-});
-
-async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀') {
-    if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
-    count.lastCounter = '';
-    count.prevNumber = count.currentNum;
-    count.currentNum = 0;
-    await message.react(react);
-    await message.replyTo(reply);
-}
-
-function chainFunc(message, inRow) {
-    console.log("first " + inRow);
-    if (!chain.currentChain) {
-        chain.currentChain = message.content.toLowerCase();
-        chain.chainAmount = 1;
-        return;
-    }
-    if (message.content.toLowerCase() === chain.currentChain && chain.lastChainer !== message.author.id) {
-        chain.chainAmount++;
-        if (chain.chainAmount >= inRow) message.react('⛓️');
-    } else {
-        if (chain.chainAmount >= inRow) message.react('💔');
-        chain.prevChain = chain.currentChain;
-        chain.currentChain = message.content.toLowerCase();
-        chain.chainAmount = 1;
-    }
-    chain.lastChainer = message.author.id;
-    console.log(chain);
-    console.log(inRow);
-}
-
-// when the client is ready, run this code
-client.once(discord.Events.ClientReady, async c => {
-    console.info(`Ready! Logged in as ${c.user.tag}`);
-    await load();
-    autoSave();
-});
-
-client.on(discord.Events.MessageCreate, async message => {
-    // if (!counts || !chains) {
-    //     counts[message.guildId] = ;
-    //     chains[message.guildId] = ;
-    // }
-    if (message.author.bot) return;
-    var cont = message.content;
-
-    for (var i = 0; i < commands.length; i++) {
-        var com = commands[i];
-
-        if (("$" + com.commandName.toLowerCase()) === message.content.split(' ')[0].toLowerCase()) {
-            if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
-                // parameter stuff
-                var paramObj = {};
-                const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
-                var tempParameters;
-                if (Boolean(message.content.split(' ')[1])) {
-                    var sections = message.content.split('"');
-                    if (message.content.includes('"')) {
-                        for (var i = 0; i < sections.length; i++) {
-                            if (i % 2 == 1 && sections[i].includes(' ')) {
-                                sections[i] = sections[i].split(' ').join(space);
-                            }
-                        }
-                    }
-                    tempParameters = sections.join('').split(' ');
-                    tempParameters.shift();
-
-                    var j = 0;
-                    for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
-                        // god i miss conditional statements
-                        function convParam(param, content) {
-                            switch ((typeof param.preset).toLowerCase()) {
-                                case "string": return String(content);
-                                case "number": return Number(content);
-                                case "boolean": return (content.toLowerCase() == "true") ? true : false;
-                                default:
-                                    console.error("uh oh!! that's not real.")
-                                    return undefined;
-                            }
-                        }
-                        // convert space character back to actual spaces, if it needs them
-                        if (tempParameters[i].includes(space)) {
-                            tempParameters[i] = tempParameters[i].split(space).join(' ');
-                        }
-                        // decides if the current param is being manually set or not, and assigns the paramObj accordingly
-                        if (tempParameters[i].includes(':')) {
-                            var halves = tempParameters[i].split(':');
-                            var param = com.params.find(x => x.name === halves[0]);
-
-                            if (Boolean(param)) {
-                                paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
-                            }
-                        } else {
-                            paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
-                            j++;
-                        }
-                    }
-                }
-
-                // if parameter is not set, use the preset
-                com.params.forEach(x => {
-                    if (!paramObj.hasOwnProperty(x.name)) {
-                        paramObj[x.name] = x.preset;
-                    }
-                });
-
-                try {
-                    com.func(message, paramObj);
-                } catch (error) {
-                    message.replyTo(error, false);
-                }
-            } else {
-                await message.replyTo('hey, you can\'t use this command!');
-            }
-            return;
-        }
-    }
-
-    if (message.channel.id === count.channel) {
-        var num = 0;
-        var content = String(wordsToNumbers(message.content));
-
-        try {
-            num = evaluate(content);
-        } catch (error) {
-            if (!isNaN(content[0])) console.error(error);
-            return;
-        }
-        
-        if (count.lastCounter === message.author.id) {
-            resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
-            return;
-        }
-
-        if (num == count.currentNum + 1) {
-            message.react('✅');
-            count.lastCounter = message.author.id;
-            count.currentNum++;
-        } else {
-            resetNumber(message, (count.prevNumber < 10) ?
-                'you can do better than THAT...' :
-                'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
-            );
-        }
-    } else if (message.channel.id === chain.channel) {
-        chainFunc(message, 3);
-    } else if (chain.autoChain >= 0) {
-        //chainFunc(message, chain.autoChain);
-    }
-});
 
 // Log in to Discord with your client's token
 client.login(config.token);
