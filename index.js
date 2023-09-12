@@ -1,7 +1,7 @@
 // Require the necessary discord.js classes
 const bigData = require('./bigData.json');
 const process = require('node:process');
-const config = require('./config.json');
+const config = require('./private/config.json');
 const discord = require('discord.js');
 const scp = require('node-scp');
 const fs = require('fs');
@@ -21,22 +21,12 @@ let remote_server = {
     port: 22,
     username: 'opc',
 }
-if (fs.existsSync("./ssh.key")) {
-    remote_server.privateKey = fs.readFileSync('./ssh.key');
+if (fs.existsSync("./private/ssh.key")) {
+    remote_server.privateKey = fs.readFileSync('./private/ssh.key');
 }
 
-// arrays containing a ton of information that would be very wasteful to get every time it's needed
-const jermaFiles = (async function() {
-    return await scp.Client(remote_server)
-        .then(client => client.list('/home/opc/mediaHosting/jermaSFX/'))
-        .catch(error => console.log(error));
-})();
-const jermaClips = (async function() {
-    return await google.youtube('v3').playlistItems.list({
-        auth: authenticate({ key: config.ytApiKey, type: "key" }),
-        part: [ 'id', 'snippet' ], playlistId: 'PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj', maxResults: 500,
-    });
-})();
+let jermaFiles;
+let jermaClips;
 
 // used to reinstate timeouts when the bot is restarted
 const allTimeouts = [];
@@ -260,41 +250,32 @@ const commands = [
 
     // mock
     new Command("general/fun", "mock", "mocks text/whoever you reply to", async function (message, parameters) {
-        let reference
+        let reference;
         try {
-            reference = ;
-            mockFunc(await message.fetchReference(), reference.content);
+            reference = await message.fetchReference();
             await message.delete();
         } catch (error) {
-            try {
-                mockFunc(message, parameters["reply"])
-            } catch (error) {
-                await message.delete();
-                reference = await message.channel.messages.fetch({ limit: 1 });
-                reference = reference.first();
-                console.log(reference);
-            }
-            
+            await message.delete();
+            reference = await message.channel.messages.fetch({ limit: 1 });
+            reference = reference.first();
         }
 
-        function mockFunc(reply, content) {
-            const mock = [];
-            for (let i = 0; i < content.length; i++) {
-                let vary = i % 2 == 0;
-                // if (parameters["variance"] !== 0) {
-                //     let vary = i % 2 == 0;
-                // }
+        const mock = [];
+        for (let i = 0; i < reference.content.length; i++) {
+            let vary = i % 2 == 0;
+            // if (parameters["variance"] !== 0) {
+            //     let vary = i % 2 == 0;
+            // }
 
-                // let vary;
-                // if (mock[i - 1] === mock[i - 1].toLowerCase()) {
-                //     vary = ;
-                // }
-                mock.push(vary ? content[i].toLowerCase() : content[i].toUpperCase());
-            }
-            reply.replyTo(mock.join(''));
+            // let vary;
+            // if (mock[i - 1] === mock[i - 1].toLowerCase()) {
+            //     vary = ;
+            // }
+            mock.push(vary ? reference.content[i].toLowerCase() : reference.content[i].toUpperCase());
         }
+        reference.replyTo(mock.join(''));
     }, [
-        new Param("reply", "the message to mock", "..."),
+        new Param("reply", "the message to mock", ""),
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
     ], []),
 
@@ -323,29 +304,37 @@ const commands = [
         switch (parameters["fileType"]) {
             case 0:
                 scp.Client(remote_server)
-                    .then(client => {
+                    .then(async client => {
                         message.react('✅');
+                        if (!jermaFiles) jermaFiles = await client.list('/home/opc/mediaHosting/jermaSFX/');
 
                         let result = `./temp/${parameters["fileName"]}.mp3`;
                         let index = Math.round(Math.random() * jermaFiles.length - 1);
                         client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result)
                             .then(async response => {
                                 await message.channel.send({ files: [result] });
-                                fs.unlink(result);
-                                client.close();
+                                fs.unlink(result, function(){client.close();});
                             }).catch(error => console.log(error));
                     }
                     ).catch(error => console.log(error));
                 break;
             case 1:
-                index = Math.round(Math.random() * jermaClips.length - 1);
-                message.replyTo(`[${jermaClips[index].title}](https://www.youtube.com/watch?v=${jermaClips[index].resourceId.videoId})`);
+                if (!jermaClips) {
+                    jermaClips = await google.youtube('v3').playlistItems.list({
+                        auth: authenticate({ key: config.ytApiKey, type: "key" }),
+                        part: [ 'id', 'snippet' ], playlistId: 'PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj', maxResults: 500,
+                    });
+                    jermaClips = jermaClips.data.items;
+                }
+                console.log(jermaClips.length);
+                let index = Math.round(Math.random() * jermaClips.length - 1);
+                console.log(jermaClips[index]);
+                message.replyTo(`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`);
                 break;
             default:
                 message.replyTo(`type "${parameters["fileType"]}" not supported!`);
                 break;
         }
-
 
         function err(message, error) {
             message.react('✅');
@@ -424,10 +413,8 @@ let chain = {
     autoChain: 0,  //
 }
 
-const counts = {};
-const chains = {};
-
-const users = {};
+const _s = {};
+const _u = {};
 
 // blacklist list, the function to push to it will be blacklist()
 const bl = [];
