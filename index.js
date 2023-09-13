@@ -2,17 +2,17 @@
 const bigData = require('./bigData.json');
 const process = require('node:process');
 const config = require('./private/config.json');
-const discord = require('discord.js');
 const scp = require('node-scp');
 const fs = require('fs');
+const dc = require('discord.js');
 const { wordsToNumbers } = require('words-to-numbers');
 const { authenticate } = require('youtube-api');
 const { google } = require('googleapis');
 const { evaluate } = require('mathjs');
 
 // create a new discord client instance
-const client = new discord.Client({
-    intents: Array.from(bigData.intents, x => eval(x))
+const client = new dc.Client({
+    intents: Array.from(bigData.intents, x => eval(`dc.GatewayIntentBits.${x}`))
 });
 
 // scp client, currently just for grabbing
@@ -25,8 +25,8 @@ if (fs.existsSync("./private/ssh.key")) {
     remote_server.privateKey = fs.readFileSync('./private/ssh.key');
 }
 
-let jermaFiles;
-let jermaClips;
+let jermaFiles, jermaClips;
+let scpClient;
 
 // used to reinstate timeouts when the bot is restarted
 const allTimeouts = [];
@@ -39,7 +39,7 @@ String.prototype.insert = function (index, string) {
     return string + this;
 };
 
-discord.Message.prototype.replyTo = function (reply, ping = true) {
+dc.Message.prototype.replyTo = function (reply, ping = true) {
     try {
         reply = reply.toString();
         return this.reply({ content: reply, allowedMentions: { repliedUser: ping } });
@@ -53,11 +53,11 @@ function sleep(ms, name, push = true) {
     return new Promise((resolve) => {
         t = setTimeout(resolve, ms);
         if (push) t = allTimeouts.push({ 
-            timeout : t, 
+            timeout : t,
             startTime : Date.now(),
             name : name,
         });
-    }).then(x => {if (push) allTimeouts.splice()});
+    }).then(x => {if (push) allTimeouts.splice(t)});
 }
 
 async function autoSave() {
@@ -138,9 +138,9 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
 }
 
 class Command {
-    constructor(genre, commandName, desc, func, params = [], limitedTo = []) {
+    constructor(genre, /* commandName,  */desc, func, params = [], limitedTo = []) {
         this.genre = genre;
-        this.commandName = commandName;
+        //this.commandName = commandName;
         this.desc = desc;
         this.func = func;
         this.params = params;
@@ -155,10 +155,6 @@ class Param {
         this.preset = preset;
     }
 }
-
-const commandData = {};
-
-
 
 const _s = {
     "default" : {
@@ -217,13 +213,13 @@ function chainFunc(message, inRow) {
 }
 
 // when the client is ready, run this code
-client.once(discord.Events.ClientReady, async c => {
+client.once(dc.Events.ClientReady, async c => {
     console.info(`Ready! Logged in as ${c.user.tag}`);
     await load();
     autoSave();
 });
 
-client.on(discord.Events.MessageCreate, async message => {
+client.on(dc.Events.MessageCreate, async message => {
     // if (!counts || !chains) {
     //     counts[message.guildId] = ;
     //     chains[message.guildId] = ;
@@ -231,76 +227,78 @@ client.on(discord.Events.MessageCreate, async message => {
     if (message.author.bot) return;
     var cont = message.content;
 
-    for (var i = 0; i < commands.length; i++) {
-        var com = commands[i];
+    var commandFromMessage = cont.split(' ')[0].substring(config.prefix.length).toLowerCase();
 
-        if (("$" + com.commandName.toLowerCase()) === message.content.split(' ')[0].toLowerCase()) {
-            if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
-                // parameter stuff
-                var paramObj = {};
-                const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
-                var tempParameters;
-                if (Boolean(message.content.split(' ')[1])) {
-                    var sections = message.content.split('"');
-                    if (message.content.includes('"')) {
-                        for (var i = 0; i < sections.length; i++) {
-                            if (i % 2 == 1 && sections[i].includes(' ')) {
-                                sections[i] = sections[i].split(' ').join(space);
-                            }
-                        }
-                    }
-                    tempParameters = sections.join('').split(' ');
-                    tempParameters.shift();
+    if (cont.startsWith(config.prefix) && commandsObj.hasOwnProperty(commandFromMessage)) {
+        var com = commandsObj[commandFromMessage];
+        console.log(com);
+        console.log(typeof com);
 
-                    var j = 0;
-                    for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
-                        // god i miss conditional statements
-                        function convParam(param, content) {
-                            switch ((typeof param.preset).toLowerCase()) {
-                                case "string": return String(content);
-                                case "number": return Number(content);
-                                case "boolean": return (content.toLowerCase() == "true") ? true : false;
-                                default:
-                                    console.error("uh oh!! that's not real.")
-                                    return undefined;
-                            }
-                        }
-                        // convert space character back to actual spaces, if it needs them
-                        if (tempParameters[i].includes(space)) {
-                            tempParameters[i] = tempParameters[i].split(space).join(' ');
-                        }
-                        // decides if the current param is being manually set or not, and assigns the paramObj accordingly
-                        if (tempParameters[i].includes(':')) {
-                            var halves = tempParameters[i].split(':');
-                            var param = com.params.find(x => x.name === halves[0]);
-
-                            if (Boolean(param)) {
-                                paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
-                            }
-                        } else {
-                            paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
-                            j++;
+        if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
+            // parameter stuff
+            var paramObj = {};
+            const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
+            var tempParameters;
+            if (Boolean(message.content.split(' ')[1])) {
+                var sections = message.content.split('"');
+                if (message.content.includes('"')) {
+                    for (var i = 0; i < sections.length; i++) {
+                        if (i % 2 == 1 && sections[i].includes(' ')) {
+                            sections[i] = sections[i].split(' ').join(space);
                         }
                     }
                 }
+                tempParameters = sections.join('').split(' ');
+                tempParameters.shift();
 
-                // if parameter is not set, use the preset
-                com.params.forEach(x => {
-                    if (!paramObj.hasOwnProperty(x.name)) {
-                        paramObj[x.name] = x.preset;
+                var j = 0;
+                for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
+                    // god i miss conditional statements
+                    function convParam(param, content) {
+                        switch ((typeof param.preset).toLowerCase()) {
+                            case "string": return String(content);
+                            case "number": return Number(content);
+                            case "boolean": return (content.toLowerCase() == "true") ? true : false;
+                            default:
+                                console.error("uh oh!! that's not real.")
+                                return undefined;
+                        }
                     }
-                });
+                    // convert space character back to actual spaces, if it needs them
+                    if (tempParameters[i].includes(space)) {
+                        tempParameters[i] = tempParameters[i].split(space).join(' ');
+                    }
+                    // decides if the current param is being manually set or not, and assigns the paramObj accordingly
+                    if (tempParameters[i].includes(':')) {
+                        var halves = tempParameters[i].split(':');
+                        var param = com.params.find(x => x.name === halves[0]);
 
-                try {
-                    com.func(message, paramObj);
-                } catch (error) {
-                    message.replyTo(error, false);
+                        if (Boolean(param)) {
+                            paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
+                        }
+                    } else {
+                        paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
+                        j++;
+                    }
                 }
-            } else {
-                await message.replyTo('hey, you can\'t use this command!');
             }
-            return;
+
+            // if parameter is not set, use the preset
+            com.params.forEach(x => {
+                if (!paramObj.hasOwnProperty(x.name)) {
+                    paramObj[x.name] = x.preset;
+                }
+            });
+
+            try {
+                com.func(message, paramObj);
+            } catch (error) {
+                message.replyTo(error, false);
+            }
+        } else {
+            await message.replyTo('hey, you can\'t use this command!');
         }
+        return;
     }
 
     if (message.channel.id === count.channel) {
@@ -336,6 +334,10 @@ client.on(discord.Events.MessageCreate, async message => {
     }
 });
 
+const genres = {};
+// used to cache data like the help command, so that resources aren't wasted generating it again
+// it isn't persistent, so data like the help command will get regenerated (good for if a new command is added/modified)
+const commandData = {};
 const commands = [
     //help
     new Command("bot/support", "help", "lists all commands", async function (message, parameters) {
@@ -375,7 +377,7 @@ const commands = [
         new Param("debugMode", "idk what this does yet lol", false),
     ], []),
 
-    //eval
+    // math
     new Command("general/fun", "math", "does the math put in front of it", async function (message, parameters) {
         try {
             message.replyTo(String(evaluate(parameters["equation"])));
@@ -386,7 +388,7 @@ const commands = [
         new Param("equation", "the equation to be evaluated", "undefined"),
     ], []),
 
-    // run
+    // eval
     new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", async function (message, parameters) {
         try {
             let code = eval(parameters["code"])
@@ -460,7 +462,7 @@ const commands = [
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
     ], []),
 
-    // mock
+    // true
     new Command("general/fun", "true", "<:true:1149936632468885555>", async function (message, parameters) {
         let reference;
         try {
@@ -483,23 +485,26 @@ const commands = [
     // jerma
     new Command("general/fun", "jerma", "sets the current channel to be the channel used for counting", async function (message, parameters) {
         switch (parameters["fileType"]) {
-            case 0:
-                scp.Client(remote_server)
-                    .then(async client => {
-                        message.react('✅');
-                        if (!jermaFiles) jermaFiles = await client.list('/home/opc/mediaHosting/jermaSFX/');
+            case 0: {
+                let reaction = await message.react('✅');
+                try {
+                    if (!scpClient) scpClient = await scp.Client(remote_server);
+                    if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
+                    console.log(jermaFiles);
 
-                        let result = `./temp/${parameters["fileName"]}.mp3`;
-                        let index = Math.round(Math.random() * jermaFiles.length - 1);
-                        client.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result)
-                            .then(async response => {
-                                await message.channel.send({ files: [result] });
-                                fs.unlink(result, function(){client.close();});
-                            }).catch(error => console.log(error));
-                    }
-                    ).catch(error => console.log(error));
-                break;
-            case 1:
+                    let result = `./temp/${parameters["fileName"]}.mp3`;
+                    let index = Math.round(Math.random() * jermaFiles.length - 1);
+                    await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result);
+                    await message.channel.send({ files: [result] });
+                    fs.unlink(result, function(){});
+                } catch (error) {
+                    console.error(error);
+                    message.react('❌');
+                    reaction.remove().catch(error => console.error('Failed to remove reactions:', error));
+                }
+                
+            } break;
+            case 1: {
                 if (!jermaClips) {
                     jermaClips = await google.youtube('v3').playlistItems.list({
                         auth: authenticate({ key: config.ytApiKey, type: "key" }),
@@ -511,7 +516,7 @@ const commands = [
                 let index = Math.round(Math.random() * jermaClips.length - 1);
                 console.log(jermaClips[index]);
                 message.replyTo(`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`);
-                break;
+            } break;
             default:
                 message.replyTo(`type "${parameters["fileType"]}" not supported!`);
                 break;
@@ -574,6 +579,113 @@ const commands = [
         "686222324860715014",
     ]),
 ];
+const commandsObj = {
+    //help
+    "help" : new Command("bot/support", "lists all commands", async function (message, parameters) {
+        var response = "";
+        function addToHelp(com) {
+            let paramNames = Array.from(com.params, x => x.name)
+            response += `$${com.commandName} (${paramNames.join(', ')}) : ${com.desc} \n`;
+            
+            if (parameters["paramDescs"]) {
+                let test = [];
+                com.params.forEach(x => test.push(`-${x.name} : ${x.desc}`));
+                test = test.join('\n');
+                // for (var i = 0; i < com.params.length; i++) {
+                //     response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
+                // }
+            }
+        }
+        try {
+            if (parameters["whichCommand"]) {
+                addToHelp(commands[parameters["whichCommand"]]);
+            } else {
+                if (commandData["response"]) {
+                    response = commandData["response"];
+                } else {
+                    Object.keys(commandsObj).forEach(key => addToHelp(commandsObj[key]));
+                    commandData["response"] = response;
+                }
+                
+            }
+        } catch (error) {
+            if (commandsObj.hasOwnProperty(parameters["whichCommand"]))
+            message.replyTo(`${parameters["whichCommand"]} is NOT a command. try again :/`)
+        }
+        
+        
+        message.replyTo(response);
+    }, [
+        new Param("paramDescs", "include parameter descriptions", false),
+        new Param("whichCommand", "will return help for a specific command", ""),
+        new Param("debugMode", "idk what this does yet lol", false),
+    ], []),
+
+    // math
+    "math" : new Command("general/fun", "does the math put in front of it", async function (message, parameters) {
+        try {
+            message.replyTo(String(evaluate(parameters["equation"])));
+        } catch (error) {
+            message.replyTo(error);
+        }
+    }, [
+        new Param("equation", "the equation to be evaluated", "undefined"),
+    ], []),
+
+    // eval
+    "eval" : new Command("general/fun", "astrl only!! runs javascript code from a string", async function (message, parameters) {
+        try {
+            let code = eval(parameters["code"])
+            if (code.toString() === '[object Promise]') {
+                code.then(result => {
+                    if (parameters["return"] && result) {
+                        if (result.toString().length <= 4000) {
+                            message.replyTo(String(result));
+                        } else {
+                            message.replyTo("the result was too long to display, but the code was still ran.");
+                        }
+                    } else {
+                        message.react('✅');
+                    }
+                });
+            } else if (code) {
+                message.replyTo(String(code));
+            }
+        } catch (error) {
+            message.replyTo(String(error));
+        }
+    }, [
+        new Param("code", "the code to run", ""),
+        new Param("return", "should the ", true),
+    ], ["438296397452935169"]),
+
+    // echo
+    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message, parameters) {
+        try {
+            await sleep(convertTime(parameters["waitValue"], parameters["waitType"], 'ms'));
+            message.channel.send(parameters["reply"]);
+            if (parameters["delete"]) message.delete();
+        } catch (error) {
+            message.channel.send(error);
+        }
+    }, [
+        new Param("reply", "the message to echo back to you", "..."),
+        new Param("waitValue", "the time it will take to echo back your message", 0),
+        new Param("waitType", "i.e ms (milliseconds), s (seconds), m (minutes)", 's'),
+        new Param("delete", "deletes message after sending", false),
+    ], []),
+
+    // kill
+    "kill" : new Command("bot", "kills the bot", async function (message, parameters) {
+        await message.channel.send('bot is now dead 😢');
+        await kill();
+    }, [],
+    [
+        "438296397452935169",
+        "705120334705197076",
+        "686222324860715014",
+    ]),
+}
 
 // Log in to Discord with your client's token
 client.login(config.token);

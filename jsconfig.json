@@ -1,7 +1,7 @@
 {
     "compilerOptions": {
-        "module": "commonjs",
-        "target": "es6"
+        "target": "es6",
+        "module": "node16"
     },
     "exclude": ["node_modules"],
     "editor.codeActionsOnSave": {
