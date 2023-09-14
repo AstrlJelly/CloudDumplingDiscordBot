@@ -1,4 +1,5 @@
 // Require the necessary discord.js classes
+// @ts-check
 const bigData = require('./bigData.json');
 const process = require('node:process');
 const config = require('./private/config.json');
@@ -31,7 +32,7 @@ let scpClient;
 // used to reinstate timeouts when the bot is restarted
 const allTimeouts = [];
 
-String.prototype.insert = function (index, string) {
+String.prototype.insert = function (/** @type {number} */ index, /** @type {string} */ string) {
     if (index > 0) {
         return this.substring(0, index) + string + this.substring(index, this.length);
     }
@@ -39,7 +40,9 @@ String.prototype.insert = function (index, string) {
     return string + this;
 };
 
-dc.Message.prototype.replyTo = function (reply, ping = true) {
+
+
+dc.Message.prototype.replyTo = function (/** @type {{ toString: () => any; }} */ reply, ping = true) {
     try {
         reply = reply.toString();
         return this.reply({ content: reply, allowedMentions: { repliedUser: ping } });
@@ -48,6 +51,10 @@ dc.Message.prototype.replyTo = function (reply, ping = true) {
     }
 };
 
+/**
+ * @param {number} ms
+ * @param {boolean} [name]
+ */
 function sleep(ms, name, push = true) {
     var t;
     return new Promise((resolve) => {
@@ -106,12 +113,33 @@ async function kill() {
     process.exit();
 }
 
+async function getServer(param) {
+    var guild;
+    try {
+        guild = param.guildId;
+    } catch (error) {
+        guild = await client.guilds.fetch(param)
+            .then(x => x.id)
+            .catch(err => console.warn("getServer() failed! Did you put in the correct parameter? Dumbass? Dumbass bitch?", err));
+    }
+    if (!client) {
+
+    }
+}
+
 // typeFrom will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
 // for now it defaults to milliseconds
+/**
+ * @param {any} time
+ * @param {string} typeTo
+ */
 function convertTime(time, typeTo, typeFrom = 'ms') {
     let typeFromNum = typeNum(typeFrom);
-    let typeToNum = typeNum(typeTo)
+    let typeToNum = typeNum(typeTo);
     let newTime = time;
+    /**
+     * @param {string} from
+     */
     function typeNum(from) {
         switch (from) {
             case 's': return 1;
@@ -122,7 +150,7 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
         }
     }
 
-    if (typeFromNum === typeTo) return time;
+    if (typeFromNum === typeToNum) return time;
 
     var max = Math.max(typeToNum, typeFromNum);
     var min = Math.min(typeToNum, typeFromNum);
@@ -138,9 +166,13 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
 }
 
 class Command {
-    constructor(genre, /* commandName,  */desc, func, params = [], limitedTo = []) {
+    /**
+     * @param {string} genre
+     * @param {string} desc
+     * @param {function} func
+     */
+    constructor(genre, desc, func, params = [], limitedTo = []) {
         this.genre = genre;
-        //this.commandName = commandName;
         this.desc = desc;
         this.func = func;
         this.params = params;
@@ -149,6 +181,11 @@ class Command {
 }
 
 class Param {
+    /**
+     * @param {string} name
+     * @param {string} desc
+     * @param {string | number | boolean} preset
+     */
     constructor(name, desc, preset) {
         this.name = name;
         this.desc = desc;
@@ -182,7 +219,11 @@ process.on('SIGINT', async () => {
     await kill();
 });
 
+/**
+ * @param {dc.Message<boolean>} message
+ */
 async function resetNumber(message, reply = 'empty. astrl screwed up lol', react = '💀') {
+    let count = _s[message.guildId].count;
     if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
     count.lastCounter = '';
     count.prevNumber = count.currentNum;
@@ -191,8 +232,13 @@ async function resetNumber(message, reply = 'empty. astrl screwed up lol', react
     await message.replyTo(reply);
 }
 
+/**
+ * @param {dc.Message<boolean>} message
+ * @param {string | number} inRow
+ */
 function chainFunc(message, inRow) {
     console.log("first " + inRow);
+    let chain = _s[message.guildId].chain;
     if (!chain.currentChain) {
         chain.currentChain = message.content.toLowerCase();
         chain.chainAmount = 1;
@@ -254,6 +300,10 @@ client.on(dc.Events.MessageCreate, async message => {
                 var j = 0;
                 for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
                     // god i miss conditional statements
+                    /**
+                     * @param {{ preset: any; }} param
+                     * @param {string} content
+                     */
                     function convParam(param, content) {
                         switch ((typeof param.preset).toLowerCase()) {
                             case "string": return String(content);
@@ -271,7 +321,7 @@ client.on(dc.Events.MessageCreate, async message => {
                     // decides if the current param is being manually set or not, and assigns the paramObj accordingly
                     if (tempParameters[i].includes(':')) {
                         var halves = tempParameters[i].split(':');
-                        var param = com.params.find(x => x.name === halves[0]);
+                        var param = com.params.find((/** @type {{ name: string; }} */ x) => x.name === halves[0]);
 
                         if (Boolean(param)) {
                             paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
@@ -284,7 +334,7 @@ client.on(dc.Events.MessageCreate, async message => {
             }
 
             // if parameter is not set, use the preset
-            com.params.forEach(x => {
+            com.params.forEach((/** @type {{ name: PropertyKey; preset: any; }} */ x) => {
                 if (!paramObj.hasOwnProperty(x.name)) {
                     paramObj[x.name] = x.preset;
                 }
@@ -338,37 +388,42 @@ const genres = {};
 // used to cache data like the help command, so that resources aren't wasted generating it again
 // it isn't persistent, so data like the help command will get regenerated (good for if a new command is added/modified)
 const commandData = {};
-const commands = [
-    //help
-    new Command("bot/support", "help", "lists all commands", async function (message, parameters) {
+const commandsObj = {
+    "help" : new Command("bot/support", "lists all commands", async function (message, parameters) {
         var response = "";
-        if (commandData["response"]) {
-            response = commandData["response"];
-        } else {
-            function addToHelp(com) {
-                response += `$${com.commandName} (`;
-                for (var i = 0; i < com.params.length; i++) {
-                    var name = com.params[i].name;
-                    response += i === com.params.length - 1 ? name : `${name}, `;
-                }
-                response += `) : ${com.desc} \n`;
-                if (parameters["paramDescs"]) {
-                    for (var i = 0; i < com.params.length; i++) {
-                        response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
-                    }
-                }
+        
+        /** @param {String} key  */
+        function addToHelp(key) {
+            var com = commandsObj[key];
+            var paramNames = Array.from(com.params, x => x.name)
+            response += `$${key} (${paramNames.join(', ')}) : ${com.desc} \n`;
+            
+            if (parameters["paramDescs"]) {
+                var test1 = [];
+                com.params.forEach((/** @type {{ name: any; desc: any; }} */ x) => test1.push(`-${x.name} : ${x.desc}`));
+                var test2 = test1.join('\n');
+                // for (var i = 0; i < com.params.length; i++) {
+                //     response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
+                // }
             }
-            try {
-                if (parameters["whichCommand"]) {
-                    addToHelp(commands.find(x => x.commandName === parameters["whichCommand"]));
-                } else {
-                    commands.forEach(x => addToHelp(x));
-                }
-            } catch (error) {
-                message.replyTo(`${parameters["whichCommand"]} is NOT a command. try again :/`)
-            }
-            commandData["response"] = response;
         }
+        try {
+            if (parameters["whichCommand"]) {
+                addToHelp(parameters["whichCommand"]);
+            } else {
+                if (commandData["response"]) {
+                    response = commandData["response"];
+                } else {
+                    Object.keys(commandsObj).forEach(key => addToHelp(commandsObj[key]));
+                    commandData["response"] = response;
+                }
+                
+            }
+        } catch (error) {
+            if (commandsObj.hasOwnProperty(parameters["whichCommand"]))
+            message.replyTo(`${parameters["whichCommand"]} is NOT a command. try again :/`)
+        }
+        
         
         message.replyTo(response);
     }, [
@@ -377,8 +432,7 @@ const commands = [
         new Param("debugMode", "idk what this does yet lol", false),
     ], []),
 
-    // math
-    new Command("general/fun", "math", "does the math put in front of it", async function (message, parameters) {
+    "math" : new Command("general/fun", "does the math put in front of it", async function (message, parameters) {
         try {
             message.replyTo(String(evaluate(parameters["equation"])));
         } catch (error) {
@@ -388,12 +442,11 @@ const commands = [
         new Param("equation", "the equation to be evaluated", "undefined"),
     ], []),
 
-    // eval
-    new Command("general/fun", "eval", "astrl only!! runs javascript code from a string", async function (message, parameters) {
+    "eval" : new Command("general/fun", "astrl only!! runs javascript code from a string", async function (message, parameters) {
         try {
             let code = eval(parameters["code"])
             if (code.toString() === '[object Promise]') {
-                code.then(result => {
+                code.then((/** @type {{ toString: () => { (): any; new (): any; length: number; }; }} */ result) => {
                     if (parameters["return"] && result) {
                         if (result.toString().length <= 4000) {
                             message.replyTo(String(result));
@@ -415,8 +468,7 @@ const commands = [
         new Param("return", "should the ", true),
     ], ["438296397452935169"]),
 
-    // echo
-    new Command("general/fun", "echo", "echoes whatever's in front of it", async function (message, parameters) {
+    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message, parameters) {
         try {
             await sleep(convertTime(parameters["waitValue"], parameters["waitType"], 'ms'));
             message.channel.send(parameters["reply"]);
@@ -431,8 +483,7 @@ const commands = [
         new Param("delete", "deletes message after sending", false),
     ], []),
 
-    // mock
-    new Command("general/fun", "mock", "mocks text/whoever you reply to", async function (message, parameters) {
+    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message, parameters) {
         let reference;
         try {
             reference = await message.fetchReference();
@@ -462,8 +513,7 @@ const commands = [
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
     ], []),
 
-    // true
-    new Command("general/fun", "true", "<:true:1149936632468885555>", async function (message, parameters) {
+    "true" : new Command("general/fun", "<:true:1149936632468885555>", async function (message, parameters) {
         let reference;
         try {
             reference = await message.fetchReference();
@@ -482,11 +532,10 @@ const commands = [
         new Param("amount", `the amount you agree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
     ], []),
 
-    // jerma
-    new Command("general/fun", "jerma", "sets the current channel to be the channel used for counting", async function (message, parameters) {
+    "jerma" : new Command("general/fun", "sets the current channel to be the channel used for counting", async function (message, parameters) {
         switch (parameters["fileType"]) {
             case 0: {
-                let reaction = await message.react('✅');
+                let reaction = message.react('✅');
                 try {
                     if (!scpClient) scpClient = await scp.Client(remote_server);
                     if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
@@ -500,7 +549,7 @@ const commands = [
                 } catch (error) {
                     console.error(error);
                     message.react('❌');
-                    reaction.remove().catch(error => console.error('Failed to remove reactions:', error));
+                    reaction.remove().catch((/** @type {any} */ error) => console.error('Failed to remove reactions:', error));
                 }
                 
             } break;
@@ -522,6 +571,10 @@ const commands = [
                 break;
         }
 
+        /**
+         * @param {{ react: (arg0: string) => void; }} message
+         * @param {any} error
+         */
         function err(message, error) {
             message.react('✅');
             console.log(error);
@@ -531,8 +584,7 @@ const commands = [
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
     ], []),
 
-    // countHere
-    new Command("patterns/counting", "countHere", "sets the current channel to be the channel used for counting", async function (message, parameters) {
+    "countHere" : new Command("patterns/counting", "sets the current channel to be the channel used for counting", async function (message, parameters) {
         let channelId = parameters["channel"] ? parameters["channel"] : message.channel.id;
         let isChannel = count.channel === channelId;
 
@@ -544,13 +596,11 @@ const commands = [
         new Param("channel", "the specific channel to start counting in", "")
     ], ["438296397452935169"]),
 
-    // resetCount
-    new Command("patterns/counting", "resetCount", "resets the current count", async function (message, parameters) {
+    "resetCount" : new Command("patterns/counting", "resets the current count", async function (message, parameters) {
         resetNumber(message, 'reset the count!', '✅');
     }, [], ["438296397452935169"]),
 
-    // chainHere
-    new Command("patterns/chaining", "chainHere", "sets the current channel to be the channel used for message chains", async function (message, parameters) {
+    "chainHere" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (message, parameters) {
         let channelId = parameters["channel"] ? parameters["channel"] : message.channel.id;
         let isChannel = chain.channel === channelId;
 
@@ -562,120 +612,11 @@ const commands = [
         new Param("channel", "the specific channel to start counting in", "")
     ], ["438296397452935169"]),
 
-    // autoChain
-    new Command("patterns/chaining", "autoChain", "will let any channel start a chain", async function (message, parameters) {
+    "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (message, parameters) {
         chain.autoChain = parameters["howMany"];
         message.replyTo(`autoChain is now ${chain.autoChain}.`);
     }, [new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)], ["438296397452935169"]),
 
-    // kill
-    new Command("bot", "kill", "kills the bot", async function (message, parameters) {
-        await message.channel.send('bot is now dead 😢');
-        await kill();
-    }, [],
-    [
-        "438296397452935169",
-        "705120334705197076",
-        "686222324860715014",
-    ]),
-];
-const commandsObj = {
-    //help
-    "help" : new Command("bot/support", "lists all commands", async function (message, parameters) {
-        var response = "";
-        function addToHelp(com) {
-            let paramNames = Array.from(com.params, x => x.name)
-            response += `$${com.commandName} (${paramNames.join(', ')}) : ${com.desc} \n`;
-            
-            if (parameters["paramDescs"]) {
-                let test = [];
-                com.params.forEach(x => test.push(`-${x.name} : ${x.desc}`));
-                test = test.join('\n');
-                // for (var i = 0; i < com.params.length; i++) {
-                //     response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
-                // }
-            }
-        }
-        try {
-            if (parameters["whichCommand"]) {
-                addToHelp(commands[parameters["whichCommand"]]);
-            } else {
-                if (commandData["response"]) {
-                    response = commandData["response"];
-                } else {
-                    Object.keys(commandsObj).forEach(key => addToHelp(commandsObj[key]));
-                    commandData["response"] = response;
-                }
-                
-            }
-        } catch (error) {
-            if (commandsObj.hasOwnProperty(parameters["whichCommand"]))
-            message.replyTo(`${parameters["whichCommand"]} is NOT a command. try again :/`)
-        }
-        
-        
-        message.replyTo(response);
-    }, [
-        new Param("paramDescs", "include parameter descriptions", false),
-        new Param("whichCommand", "will return help for a specific command", ""),
-        new Param("debugMode", "idk what this does yet lol", false),
-    ], []),
-
-    // math
-    "math" : new Command("general/fun", "does the math put in front of it", async function (message, parameters) {
-        try {
-            message.replyTo(String(evaluate(parameters["equation"])));
-        } catch (error) {
-            message.replyTo(error);
-        }
-    }, [
-        new Param("equation", "the equation to be evaluated", "undefined"),
-    ], []),
-
-    // eval
-    "eval" : new Command("general/fun", "astrl only!! runs javascript code from a string", async function (message, parameters) {
-        try {
-            let code = eval(parameters["code"])
-            if (code.toString() === '[object Promise]') {
-                code.then(result => {
-                    if (parameters["return"] && result) {
-                        if (result.toString().length <= 4000) {
-                            message.replyTo(String(result));
-                        } else {
-                            message.replyTo("the result was too long to display, but the code was still ran.");
-                        }
-                    } else {
-                        message.react('✅');
-                    }
-                });
-            } else if (code) {
-                message.replyTo(String(code));
-            }
-        } catch (error) {
-            message.replyTo(String(error));
-        }
-    }, [
-        new Param("code", "the code to run", ""),
-        new Param("return", "should the ", true),
-    ], ["438296397452935169"]),
-
-    // echo
-    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message, parameters) {
-        try {
-            await sleep(convertTime(parameters["waitValue"], parameters["waitType"], 'ms'));
-            message.channel.send(parameters["reply"]);
-            if (parameters["delete"]) message.delete();
-        } catch (error) {
-            message.channel.send(error);
-        }
-    }, [
-        new Param("reply", "the message to echo back to you", "..."),
-        new Param("waitValue", "the time it will take to echo back your message", 0),
-        new Param("waitType", "i.e ms (milliseconds), s (seconds), m (minutes)", 's'),
-        new Param("delete", "deletes message after sending", false),
-    ], []),
-
-    // kill
     "kill" : new Command("bot", "kills the bot", async function (message, parameters) {
         await message.channel.send('bot is now dead 😢');
         await kill();
@@ -686,6 +627,6 @@ const commandsObj = {
         "686222324860715014",
     ]),
 }
-
+commandsObj["help"];
 // Log in to Discord with your client's token
 client.login(config.token);
