@@ -9,7 +9,7 @@ const dc = require('discord.js');
 const { wordsToNumbers } = require('words-to-numbers');
 const { authenticate } = require('youtube-api');
 const { google } = require('googleapis');
-const { evaluate } = require('mathjs');
+const { evaluate, random } = require('mathjs');
 
 // create a new discord client instance
 const client = new dc.Client({
@@ -190,6 +190,11 @@ class Param {
     }
 }
 
+let sillyObj = {
+    "391459218034786304" : true, // untitled
+    "999020930800033876" : true, // raffy
+}
+
 let _s = {
     "default" : {
         count : { // default counting variables
@@ -272,22 +277,23 @@ client.on(dc.Events.MessageCreate, async message => {
     //     counts[message.guildId] = ;
     //     chains[message.guildId] = ;
     // }
-    if (message.author.id === "438296397452935169") return; // testing mode :)
+    //if (message.author.id === "438296397452935169") return; // testing mode :)
     if (message.author.bot) return;
     var cont = message.content;
 
     var commandFromMessage = cont.split(' ')[0].substring(config.prefix.length).toLowerCase();
 
-    console.log("5");
     if (cont.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
+        if (sillyObj.hasOwnProperty(message.author.id) && Math.random() < 0.995) {
+            message.reply(makeReply(await commands["mock"].func(message, {}, false)));
+            return;
+        }
         var com = commands[commandFromMessage];
-        console.log("4");
         if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
             // parameter stuff
             var paramObj = {};
             const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
             var tempParameters;
-            console.log("3");
             if (Boolean(message.content.split(' ')[1])) {
                 var sections = message.content.split('"');
                 if (message.content.includes('"')) {
@@ -335,7 +341,6 @@ client.on(dc.Events.MessageCreate, async message => {
                     }
                 }
             }
-            console.log("2");
 
             // if parameter is not set, use the preset
             com.params.forEach((/** @type {{ name: PropertyKey; preset: any; }} */ x) => {
@@ -344,10 +349,8 @@ client.on(dc.Events.MessageCreate, async message => {
                 }
             });
 
-            console.log("1");
             try {
-                console.log("0");
-                com.func(message, paramObj);
+                await com.func(message, paramObj);
             } catch (error) {
                 message.reply(makeReply(error, false));
             }
@@ -488,13 +491,13 @@ const commands = {
         new Param("delete", "deletes message after sending", false),
     ], []),
 
-    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message, parameters) {
+    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message, parameters, del = true) {
         let reference;
         try {
             reference = await message.fetchReference();
-            await message.delete();
+            if (del) await message.delete();
         } catch (error) {
-            await message.delete();
+            if (del) await message.delete();
             reference = await message.channel.messages.fetch({ limit: 1 });
             reference = reference.first();
         }

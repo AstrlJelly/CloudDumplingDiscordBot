@@ -8,5 +8,6 @@
         "source.organizeImports": true
     },
     "editor.showUnused": true,
-    "editor.autoImportSuggestions.enabled": true
+    "editor.autoImportSuggestions.enabled": true,
+    "typelens.exclude": ["Object"]
 }
