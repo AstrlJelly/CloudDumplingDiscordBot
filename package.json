@@ -11,6 +11,8 @@
   "license": "ISC",
   "dependencies": {
     "@keyv/sqlite": "^3.6.5",
+    "brain.js": "^2.0.0-beta.23",
+    "brainjs": "^0.7.4",
     "discord.js": "^14.13.0",
     "fs": "^0.0.1-security",
     "google-auth-library": "^9.0.0",

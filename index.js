@@ -6,14 +6,16 @@ const config = require('./private/config.json');
 const scp = require('node-scp');
 const fs = require('fs');
 const dc = require('discord.js');
+const brain = require('brain.js');
 const { wordsToNumbers } = require('words-to-numbers');
+// @ts-ignore idk why this isn't importing correctly, but the code using it works fine
 const { authenticate } = require('youtube-api');
 const { google } = require('googleapis');
 const { evaluate, random } = require('mathjs');
 
 // create a new discord client instance
 const client = new dc.Client({
-    intents: Array.from(bigData.intents, x => eval(`dc.GatewayIntentBits.${x}`))
+    intents: Array.from(bigData.intents, x => dc.GatewayIntentBits[x])
 });
 
 // scp client, currently just for grabbing
@@ -38,7 +40,12 @@ function makeReply(content= '', ping = false, files = ['']) {
     try {
         if (typeof content !== typeof String) content = content.toString();
         var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
-        if (replyObj.content.length === 0) replyObj.content = "can't send an empty message!";
+        var length = replyObj.content.length;
+        if (length === 0) {
+            replyObj.content = "can't send an empty message!";
+        } else if (length > 2000) {
+            replyObj.content = replyObj.content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
+        }
         if (files.length[0]) replyObj.files = files;
         return replyObj;
     } catch (error) {
@@ -51,7 +58,7 @@ function makeReply(content= '', ping = false, files = ['']) {
  * @param {number} ms
  * @param {boolean} [name]
  */
-function sleep(ms, name, push = true) {
+async function sleep(ms, name, push = true) {
     var t;
     return new Promise((resolve) => {
         t = setTimeout(resolve, ms);
@@ -76,7 +83,7 @@ async function save() {
         _s : _s,
         _u : _u,
         // timeouts : allTimeouts,
-    }), function(err) {
+    }), err => {
         if (err) return console.error(err);
         
         var date = new Date();
@@ -92,7 +99,7 @@ async function save() {
 
 async function load() {
     if (dontPersist) return;
-    fs.readFile("./persistence/users.json", 'utf-8', async function(err, data) {
+    fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
         try {
             let dataObj = JSON.parse(data);
             // let dataKeys = Object.keys(dataObj)
@@ -277,13 +284,13 @@ client.on(dc.Events.MessageCreate, async message => {
     //     counts[message.guildId] = ;
     //     chains[message.guildId] = ;
     // }
-    //if (message.author.id === "438296397452935169") return; // testing mode :)
+    //if (message.author.id !== "438296397452935169") return; // testing mode :)
     if (message.author.bot) return;
     var cont = message.content;
 
-    var commandFromMessage = cont.split(' ')[0].substring(config.prefix.length).toLowerCase();
+    var commandFromMessage = cont.split(' ')[0].substring(config.prefix.length);
 
-    if (cont.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
+    if (cont.startsWith(config.prefix) && commands[commandFromMessage]) {
         if (sillyObj.hasOwnProperty(message.author.id) && Math.random() < 0.995) {
             message.reply(makeReply(await commands["mock"].func(message, {}, false)));
             return;
@@ -309,10 +316,6 @@ client.on(dc.Events.MessageCreate, async message => {
                 var j = 0;
                 for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
                     // god i miss conditional statements
-                    /**
-                     * @param {{ preset: any; }} param
-                     * @param {string} content
-                     */
                     function convParam(param, content) {
                         switch ((typeof param.preset).toLowerCase()) {
                             case "string": return String(content);
@@ -330,7 +333,7 @@ client.on(dc.Events.MessageCreate, async message => {
                     // decides if the current param is being manually set or not, and assigns the paramObj accordingly
                     if (tempParameters[i].includes(':')) {
                         var halves = tempParameters[i].split(':');
-                        var param = com.params.find((/** @type {{ name: string; }} */ x) => x.name === halves[0]);
+                        var param = com.params.find(x => x.name === halves[0]);
 
                         if (Boolean(param)) {
                             paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
@@ -398,46 +401,57 @@ const genres = {};
 // it isn't persistent, so data like the help command will get regenerated (good for if a new command is added/modified)
 const commandData = {};
 const commands = {
-    "help" : new Command("bot/support", "lists all commands", async function (message, parameters) {
-        var response = "";
+    "help" : new Command("bot/support", "lists all commands", async function (message, p) {
+        var response = [];
         
         function addToHelp(key) {
             var com = commands[key];
-            var paramNames = Array.from(com.params, x => x.name)
-            response += `$${key} (${paramNames.join(', ')}) : ${com.desc} \n`;
+            var paramNames = Array.from(com.params, x => x.name);
+
+            response.push(`$${key} (${paramNames.join(', ')}) : ${com.desc}\n`);
             
-            if (parameters["paramDescs"]) {
+            if (p["paramDescs"]) {
                 var test1 = [];
                 com.params.forEach(x => test1.push(`-${x.name} : ${x.desc}`));
-                response += test1.join('\n');
+                response.push(test1.join('\n'));
                 // for (var i = 0; i < com.params.length; i++) {
                 //     response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
                 // }
             }
         }
-        try {
-            if (parameters["whichCommand"]) {
-                addToHelp(parameters["whichCommand"]);
-            } else {
-                if (commandData["response"]) {
-                    response = commandData["response"];
-                } else {
-                    Object.keys(commands).forEach(key => addToHelp(commands[key]));
-                    console.log("test")
-                    commandData["response"] = response;
-                }
+
+        if (p["debug"]) {
+            try {
+                message.reply(makeReply(eval(`commands["${p["whichCommand"]}"].${p["debug"]}.toString();`)));
+            } catch (error) {
+                message.reply(makeReply("ermm... try again bucko"));
             }
-        } catch (error) {
-            if (commands.hasOwnProperty(parameters["whichCommand"]))
-            message.reply(makeReply(`${parameters["whichCommand"]} is NOT a command. try again :/`))
+        } else {
+            try {
+                console.log(Boolean(p["whichCommand"]));
+                if (Boolean(p["whichCommand"])) {
+                    addToHelp(p["whichCommand"]);
+                } else {
+                    Object.keys(commands).forEach(key => addToHelp(key));
+                    // if (commandData["response"]) {
+                    //     response = commandData["response"];
+                    // } else {
+                    //     Object.keys(commands).forEach(key => addToHelp(commands[key]));
+                    //     console.log("test")
+                    //     commandData["response"] = response;
+                    // }
+                }
+                console.log(`commands["${p["whichCommand"]}"].${p["debug"]}`);
+                message.reply(makeReply(response.join('')));
+            } catch (error) {
+                if (commands.hasOwnProperty(p["whichCommand"]))
+                message.reply(makeReply(`${p["whichCommand"]} is NOT a command. try again :/`))
+            }
         }
-        
-        console.log(response);
-        message.reply(makeReply(response));
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
-        new Param("debugMode", "idk what this does yet lol", false),
+        new Param("debug", "gets the specific component of a command", ""),
     ], []),
 
     "math" : new Command("general/fun", "does the math put in front of it", async function (message, parameters) {
@@ -530,7 +544,6 @@ const commands = {
             await message.delete();
             reference = await message.channel.messages.fetch({ limit: 1 });
             reference = reference.first();
-            console.log(reference);
         }
         
         for (let i = 0; i < Math.min(parameters["amount"], bigData.trueEmojis.length); i++) {
@@ -547,7 +560,6 @@ const commands = {
                 try {
                     if (!scpClient) scpClient = await scp.Client(remote_server);
                     if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
-                    console.log(jermaFiles);
 
                     let result = `./temp/${parameters["fileName"]}.mp3`;
                     let index = Math.round(Math.random() * jermaFiles.length - 1);
@@ -569,23 +581,12 @@ const commands = {
                     });
                     jermaClips = jermaClips.data.items;
                 }
-                console.log(jermaClips.length);
                 let index = Math.round(Math.random() * jermaClips.length - 1);
-                console.log(jermaClips[index]);
                 message.reply(makeReply(`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`));
             } break;
             default:
                 message.reply(makeReply(`type "${parameters["fileType"]}" not supported!`));
                 break;
-        }
-
-        /**
-         * @param {{ react: (arg0: string) => void; }} message
-         * @param {any} error
-         */
-        function err(message, error) {
-            message.react('✅');
-            console.log(error);
         }
     }, [
         new Param("fileType", "the type of jerma file (INITIALIZATION ONLY)", 0),
@@ -593,12 +594,13 @@ const commands = {
     ], []),
 
     "convertTime" : new Command("general/fun", "converts time", async function(message, parameters) {
-        try {
-            let p = parameters;
-            message.reply(p[""], p[""], p[""], p[""])
-        } catch (error) {
+        // try {
+        //     let p = parameters;
+        //     message.reply(p[""], p[""], p[""], p[""])
+        // } catch (error) {
             
-        }
+        // }
+        message.reply(makeReply(commands["convertTime"].func.toString()))
     }, [
         new Param("timeFromValue", "", 0),
         new Param("timeFromType", "", "s"),
@@ -611,13 +613,17 @@ const commands = {
         if (parameters["channel"]) {
             try {
                 channel = await client.channels.fetch(parameters["channel"]);
-                message.react('✅');
             } catch (error) {
-                message.react('❌');
+                try {
+                    channel = await message.guild.channels.cache.find(channel => channel.name.toLowerCase() === parameters["channel"].toLowerCase());
+                } catch (error) {
+                    await message.react('❌');
+                    return;
+                }
             }
         }
+        message.react('✅');
 
-        console.log(channel);
         if (channel.id === getServer(channel).count.channel.id) {
             channel.send(`counting in ${channel.name.toLowerCase()} has ceased.`);
             getServer(channel).count.channel = null;
@@ -625,7 +631,6 @@ const commands = {
             channel.send(`alright, count in ${channel.name.toLowerCase()}!`);
             getServer(channel).count.channel = channel;
         }
-        
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], ["438296397452935169"]),
@@ -635,6 +640,30 @@ const commands = {
     }, [], ["438296397452935169"]),
 
     "chainHere" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (message, parameters) {
+        let channel = message.channel;
+        if (parameters["channel"]) {
+            try {
+                channel = await client.channels.fetch(parameters["channel"]);
+            } catch (error) {
+                try {
+                    channel = await message.guild.channels.cache.find(channel => channel.name.toLowerCase() === parameters["channel"].toLowerCase());
+                } catch (error) {
+                    await message.react('❌');
+                    return;
+                }
+            }
+        }
+        message.react('✅');
+
+        if (channel.id === getServer(channel).count.channel.id) {
+            channel.send(`counting in ${channel.name.toLowerCase()} has ceased.`);
+            getServer(channel).count.channel = null;
+        } else {
+            channel.send(`alright, count in ${channel.name.toLowerCase()}!`);
+            getServer(channel).count.channel = channel;
+        }
+
+        // old stuff here
         let channelId = parameters["channel"] ? parameters["channel"] : message.channel.id;
         let isChannel = getServer(message).chain.channel === channelId;
 
@@ -644,12 +673,14 @@ const commands = {
             .catch(e => message.replyTo(e));
     }, [
         new Param("channel", "the specific channel to start counting in", "")
-    ], ["438296397452935169"]),
+    ], [ "438296397452935169" ]),
 
     "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (message, parameters) {
         getServer(message).chain.autoChain = parameters["howMany"];
         message.replyTo(`autoChain is now ${getServer(message).chain.autoChain}.`);
-    }, [new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)], ["438296397452935169"]),
+    }, [
+        new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)
+    ], [ "438296397452935169" ]),
 
     "sanityCheck" : new Command("bot", "checks the parameters of each command to see if any overlap", async function(message, parameters) {
         var overlaps = [];
@@ -658,22 +689,35 @@ const commands = {
             var params = commands[com].params;
             params.forEach(x => {
                 params.forEach(y => {
-                    if (x.name === y.name) {
-                        if (overlaps.includes(z => z.name !== x.name)) {
-                            overlaps.push(x.name);
-                        }
+                    if (x.name === y.name && x !== y) {
+                        overlaps.push(`${x.name} (preset : ${x.preset}) : ${x.desc}`);
                     }
                 });
             });
         }
         if (overlaps.length > 0) {
-            message.reply(makeReply("overlaps:\n" + overlaps.join('\n') +"\n astrl u dumbass"))
+            message.reply(makeReply("overlaps:\n" + overlaps.join('\n') +"\nastrl u dumbass"))
         } else {
             message.reply(makeReply("no overlaps here! wow isn't astrl such a good programmer <:smide:1136427209041649694>"))
         }
     }, [
-        new Param("doubleUp", "", 0),
-        new Param("doubleUp", "", 0),
+        // new Param("doubleUp", "desription on", 52),
+        // new Param("doubleUp", "descirtpn dos", "this is a default"),
+    ]),
+
+    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message, parameters) {
+        try {
+            var channel = client.channels.cache.get(parameters["channel"]);
+            await channel.send(makeReply(parameters["message"]));
+        } catch (error) {
+            message.reply(makeReply("dumbass\n"+error))
+        }
+    }, [
+        new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel
+        new Param("message", "the message to send into the channel", "uh"),
+    ],
+    [
+        "438296397452935169",
     ]),
 
     "kill" : new Command("bot", "kills the bot", async function (message, parameters) {
