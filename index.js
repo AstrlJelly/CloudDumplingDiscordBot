@@ -519,18 +519,17 @@ const commands = {
     ], []),
 
     "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message, parameters, del = true) {
-        let reference;
-        try {
-            reference = parameters["message"] ? await message.channel.messages.fetch(parameters["message"]) : await message.fetchReference() ;
-            if (del) await message.delete();
-        } catch (error) {
-            if (del) await message.delete();
-            reference = await message.channel.messages.fetch({ limit: 1 });
-            reference = reference.first();
+        async function getMessage() {
+            var messages = await message.channel.messages.fetch({ limit: 2 });
+            var lastMessage = messages.last() ?? await getMessage();
+            return lastMessage;
         }
 
+        let reference = parameters["reply"] !== "" ? message : await (message.reference !== null ? message.fetchReference() : getMessage());
+        let toMock    = parameters["reply"] !== "" ? parameters["reply"] : reference.content;
+
         const mock = [];
-        for (let i = 0; i < reference.content.length; i++) {
+        for (let i = 0; i < toMock.length; i++) {
             let vary = i % 2 == 0;
             // if (parameters["variance"] !== 0) {
             //     let vary = i % 2 == 0;
@@ -540,9 +539,15 @@ const commands = {
             // if (mock[i - 1] === mock[i - 1].toLowerCase()) {
             //     vary = ;
             // }
-            mock.push(vary ? reference.content[i].toLowerCase() : reference.content[i].toUpperCase());
+            mock.push(vary ? toMock[i].toLowerCase() : toMock[i].toUpperCase());
         }
-        reference.reply(makeReply(mock.join('')));
+        if (parameters["reply"] === "") {
+            reference.reply(makeReply(mock.join('')));
+        } else {
+            reference.channel.send(makeReply(mock.join('')));
+        }
+
+        if (del) await message.delete();
     }, [
         new Param("reply", "the message to mock", ""),
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
