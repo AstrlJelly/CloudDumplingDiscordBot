@@ -135,6 +135,11 @@ function getServer(param) {
     return _s[guild];
 }
 
+function currentTime() {
+    return Math.round(performance.now() * 1000) / 1000;
+    // return parseFloat(performance.now().toFixed(3));
+}
+
 // convertTime() will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
 // for now it defaults to milliseconds
 /**
@@ -295,83 +300,16 @@ client.on(dc.Events.MessageCreate, async message => {
     // }
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
     if (message.author.bot) return;
-    var cont = message.content;
 
-    var commandFromMessage = cont.split(' ')[0].substring(config.prefix.length);
+    var commandFromMessage = message.content.split(' ')[0].substring(config.prefix.length);
 
     // #region command handler
-    if (cont.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
+    if (message.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
         if (sillyObj.hasOwnProperty(message.author.id) && Math.random() < 0.99) {
             await commands["mock"].func(message, { "message" : message.id }, false);
             return;
         }
-        var com = commands[commandFromMessage];
-        if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
-            // #region parameter stuff
-            var paramObj = {};
-            const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
-            var tempParameters;
-            if (cont.indexOf(' ') > -1) {
-                var sections = cont.split('"');
-                if (cont.indexOf('"') > -1) {
-                    for (var i = 0; i < sections.length; i++) {
-                        if (i % 2 == 1 && sections[i].indexOf(' ') > -1) {
-                            sections[i] = sections[i].split(' ').join(space);
-                        }
-                    }
-                }
-                tempParameters = sections.join('').split(' ');
-                tempParameters.shift();
-
-                var j = 0;
-                for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
-                    // god i miss conditional statements
-                    function convParam(param, content) {
-                        switch ((typeof param.preset).toLowerCase()) {
-                            case "string": return String(content);
-                            case "number": return Number(content);
-                            case "boolean": return (content.toLowerCase() == "true") ? true : false;
-                            default:
-                                console.error("uh oh!! that's not real.")
-                                return undefined;
-                        }
-                    }
-                    // convert space character back to actual spaces, if it needs them
-                    if (tempParameters[i].indexOf(space) > -1) {
-                        tempParameters[i] = tempParameters[i].split(space).join(' ');
-                    }
-                    // decides if the current param is being manually set or not, and assigns the paramObj accordingly
-                    if (tempParameters[i].indexOf(':') > -1) {
-                        var halves = tempParameters[i].split(':');
-                        var param = com.params.find(x => x.name === halves[0]);
-
-                        if (Boolean(param)) {
-                            paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
-                        }
-                    } else {
-                        paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
-                        j++;
-                    }
-                }
-            }
-            // #endregion
-
-            // if parameter is not set, use the preset
-            com.params.forEach((/** @type {{ name: PropertyKey; preset: any; }} */ x) => {
-                if (!paramObj.hasOwnProperty(x.name)) {
-                    paramObj[x.name] = x.preset;
-                }
-            });
-
-            try {
-                await com.func(message, paramObj);
-                com.timeout
-            } catch (error) {
-                message.reply(makeReply(error, false));
-            }
-        } else {
-            await message.reply(makeReply('hey, you can\'t use this command!'));
-        }
+        await parseCommand(message, message.content, commandFromMessage, commands);
         return;
     }
     // #endregion
@@ -379,7 +317,7 @@ client.on(dc.Events.MessageCreate, async message => {
     // #region counting and chain handler
     if (message.channel.id === getServer(message).count.channel) {
         var num = 0;
-        var content = String(wordsToNumbers(cont));
+        var content = String(wordsToNumbers(message.content));
 
         try {
             num = evaluate(content);
@@ -411,6 +349,92 @@ client.on(dc.Events.MessageCreate, async message => {
     // #endregion
 });
 
+/**
+ * @param {dc.Message<boolean>} message
+ * @param {string} content
+ * @param {string} command
+ * @param {object} comms
+ */
+async function parseCommand(message, content, command, comms)
+{
+    if (!comms.hasOwnProperty(command)) {
+        console.error("nope. no " + command + " here");
+        return;
+    }
+    var timeBefore = currentTime();
+    var com = comms[command];
+    if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
+        // #region parameter stuff
+        var paramObj = {};
+        const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
+        var tempParameters;
+        if (content.indexOf(' ') > -1) {
+            var sections = content.split('"');
+            if (content.indexOf('"') > -1) {
+                for (var i = 0; i < sections.length; i++) {
+                    if (i % 2 == 1 && sections[i].indexOf(' ') > -1) {
+                        sections[i] = sections[i].split(' ').join(space);
+                    }
+                }
+            }
+            tempParameters = sections.join('').split(' ');
+            tempParameters.shift();
+
+            var j = 0;
+            for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
+                // god i miss conditional statements
+                function convParam(param, content) {
+                    var preset = (typeof param.preset).toLowerCase();
+                    switch (preset) {
+                        case "string": return String(content);
+                        case "number": return Number(content);
+                        case "boolean": return (content.toLowerCase() == "true");
+                        default:
+                            console.error(`uh oh!! that's not real.\ntype of ${preset} on parameter ${param.name} of command ${com.name} is invalid.`)
+                            return undefined;
+                    }
+                }
+                // convert space character back to actual spaces, if it needs them
+                if (tempParameters[i].indexOf(space) > -1) {
+                    tempParameters[i] = tempParameters[i].split(space).join(' ');
+                }
+                // decides if the current param is being manually set or not, and assigns the paramObj accordingly
+                if (tempParameters[i].indexOf(':') > -1) {
+                    var halves = tempParameters[i].split(':');
+                    var param = com.params.find(x => x.name === halves[0]);
+
+                    if (Boolean(param)) {
+                        paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
+                    }
+                } else {
+                    paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
+                    j++;
+                }
+            }
+        }
+        // #endregion
+
+        // if parameter is not set, use the preset
+        com.params.forEach(x => {
+            if (!paramObj.hasOwnProperty(x.name)) {
+                paramObj[x.name] = x.preset;
+            }
+        });
+
+        try {
+            var comTime = currentTime();
+            console.log(`took ${comTime - timeBefore} milliseconds to complete parsing message`);
+            await com.func(message, paramObj);
+            console.log(`took ${currentTime() - comTime} milliseconds to finish function`);
+            // com.timeout
+        } catch (error) {
+            message.reply(makeReply(error, false));
+        }
+    } else {
+        await message.reply(makeReply('hey, you can\'t use this command!'));
+    }
+}
+
 const genres = {};
 // used to cache data like the help command, so that resources aren't wasted generating it again
 // it isn't persistent, so data like the help command will get regenerated (good for if a new command is added/modified)
@@ -427,8 +451,8 @@ const commands = {
             
             if (p["paramDescs"]) {
                 var test1 = [];
-                com.params.forEach(x => test1.push(`-${x.name} : ${x.desc}`));
-                response.push(test1.join('\n'));
+                com.params.forEach(x => test1.push(`-${x.name} : ${x.desc}\n`));
+                response.push(test1.join(''));
                 // for (var i = 0; i < com.params.length; i++) {
                 //     response += `-${com.params[i].name} : ${com.params[i].desc} \n`;
                 // }
@@ -548,7 +572,7 @@ const commands = {
         new Param("amount", `the amount you agree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
     ], []),
 
-    "jerma" : new Command("general/fun", "sets the current channel to be the channel used for counting", async function (message, parameters) {
+    "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (message, parameters) {
         switch (parameters["fileType"]) {
             case 0: {
                 let reaction = message.react('✅');
@@ -564,7 +588,7 @@ const commands = {
                 } catch (error) {
                     console.error(error);
                     message.react('❌');
-                    reaction.remove().catch((/** @type {any} */ error) => console.error('Failed to remove reactions:', error));
+                    reaction.remove().catch((/** @type {any} */ error) => console.error('Failed to remove reactions:\n', error));
                 }
                 
             } break;
@@ -584,7 +608,7 @@ const commands = {
                 break;
         }
     }, [
-        new Param("fileType", "the type of jerma file (INITIALIZATION ONLY)", 0),
+        new Param("fileType", "the type of jerma file", 0),
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
     ], []),
 
@@ -630,10 +654,6 @@ const commands = {
         new Param("channel", "the specific channel to start counting in", "")
     ], ["438296397452935169"]),
 
-    "resetCount" : new Command("patterns/counting", "resets the current count", async function (message, parameters) {
-        resetNumber(message, 'reset the count!', '✅');
-    }, [], ["438296397452935169"]),
-
     "chainHere" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (message, parameters) {
         let channel = message.channel;
         if (parameters["channel"]) {
@@ -673,42 +693,17 @@ const commands = {
 
     "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (message, parameters) {
         getServer(message).chain.autoChain = parameters["howMany"];
-        message.replyTo(`autoChain is now ${getServer(message).chain.autoChain}.`);
+        console.log(getServer(message).chain.autoChain);
+        message.reply(makeReply(`autoChain is now ${getServer(message).chain.autoChain}.`));
     }, [
         new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)
     ], [ "438296397452935169" ]),
 
     "cmd" : new Command("bot", "more internal commands that only astrl can use", async function (message, parameters) {
-        
+        var cont = message.content.substring(message.content.indexOf(' ') + 1)
+        console.log("cont : " + cont);
+        parseCommand(message, cont, cont.split(' ')[0], cmdCommands);
     }, [], [ "438296397452935169" ]),
-
-    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message, parameters) {
-        try {
-            var guild = client.guilds.cache.get(parameters["guild"]);
-            var channel = guild?.channels.cache.get(parameters["channel"]);
-            // @ts-ignore
-            await channel.send(makeReply(parameters["message"]));
-        } catch (error) {
-            message.reply(makeReply("dumbass\n"+error))
-        }
-    }, [
-        new Param("message", "the message to send into the channel", "uh"),
-        new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
-        new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
-        new Param("convo", "have every message after this send a message into the specified channel?", false),
-    ], [
-        "438296397452935169",
-    ]),
-
-    "kill" : new Command("bot", "kills the bot", async function (message, parameters) {
-        await message.channel.send('bot is now dead 😢');
-        await kill();
-    }, [],
-    [
-        "438296397452935169",
-        "705120334705197076",
-        "686222324860715014",
-    ]),
 }
 
 // for more internal purposes; really just for astrl lol
@@ -734,7 +729,7 @@ const cmdCommands = {
 
         if (p["debug"]) {
             try {
-                message.reply(makeReply(eval(`commands["${p["whichCommand"]}"].${p["debug"]}.toString();`)));
+                message.reply(makeReply(eval(`cmdCommands["${p["whichCommand"]}"].${p["debug"]}.toString();`)));
             } catch (error) {
                 message.reply(makeReply("ermm... try again bucko"));
             }
@@ -744,19 +739,19 @@ const cmdCommands = {
                 if (Boolean(p["whichCommand"])) {
                     addToHelp(p["whichCommand"]);
                 } else {
-                    Object.keys(commands).forEach(key => addToHelp(key));
+                    Object.keys(cmdCommands).forEach(key => addToHelp(key));
                     // if (commandData["response"]) {
                     //     response = commandData["response"];
                     // } else {
-                    //     Object.keys(commands).forEach(key => addToHelp(commands[key]));
+                    //     Object.keys(cmdCommands).forEach(key => addToHelp(cmdCommands[key]));
                     //     console.log("test")
                     //     commandData["response"] = response;
                     // }
                 }
-                console.log(`commands["${p["whichCommand"]}"].${p["debug"]}`);
+                console.log(`cmdCommands["${p["whichCommand"]}"].${p["debug"]}`);
                 message.reply(makeReply(response.join('')));
             } catch (error) {
-                if (commands.hasOwnProperty(p["whichCommand"]))
+                if (cmdCommands.hasOwnProperty(p["whichCommand"]))
                 message.reply(makeReply(`${p["whichCommand"]} is NOT a command. try again :/`))
             }
         }
@@ -813,6 +808,28 @@ const cmdCommands = {
     }, [
         // new Param("doubleUp", "desription on", 52),
         // new Param("doubleUp", "descirtpn dos", "this is a default"),
+    ]),
+
+    "resetCount" : new Command("patterns/counting", "resets the current count", async function (message, parameters) {
+        resetNumber(message, 'reset the count!', '✅');
+    }, [], ["438296397452935169"]),
+
+    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message, parameters) {
+        try {
+            var guild = client.guilds.cache.get(parameters["guild"]);
+            var channel = guild?.channels.cache.get(parameters["channel"]);
+            // @ts-ignore
+            await channel.send(makeReply(parameters["message"]));
+        } catch (error) {
+            message.reply(makeReply("dumbass\n"+error))
+        }
+    }, [
+        new Param("message", "the message to send into the channel", "uh"),
+        new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
+        new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
+        new Param("convo", "have every message after this send a message into the specified channel?", false),
+    ], [
+        "438296397452935169",
     ]),
 
     "kill" : new Command("bot", "kills the bot", async function (message, parameters) {
