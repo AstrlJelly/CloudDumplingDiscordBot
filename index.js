@@ -32,7 +32,7 @@ if (fs.existsSync("./private/ssh.key")) {
 let jermaFiles, jermaClips;
 let scpClient;
 
-let dontPersist = true;
+let dontPersist = false;
 
 // used to reinstate timeouts when the bot is restarted
 const allTimeouts = [];
@@ -103,13 +103,17 @@ async function load() {
     fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
         try {
             let dataObj = JSON.parse(data);
-            // let dataKeys = Object.keys(dataObj)
-            // for (var i = 0; i < dataKeys.length; i++) {
-            //     console.log(eval(`${dataKeys[i]} = dataObj.key`));
-            // }
-            _s = dataObj._s;
-            _u = dataObj._u;
-            // if (allTimeouts.length) ;
+            for (const [key, value] of Object.entries(dataObj)) {
+                console.log(`${key}: ${value}`);
+                _s[key] = value;
+            }
+
+            client.guilds.cache.forEach(guild => {
+                if (!_s.hasOwnProperty(guild.id)) {
+                    console.log("guild with id \"" + guild.id + "\" set to default");
+                    _s[guild.id] = _s["default"];
+                }
+            })
 
             console.info("The file was loaded!");
         } catch (error) {
@@ -285,12 +289,6 @@ client.once(dc.Events.ClientReady, async c => {
     console.info(`Ready! Logged in as ${c.user.tag}`);
     await load();
     autoSave();
-    client.guilds.cache.forEach(guild => {
-        if (!_s.hasOwnProperty(guild.id)) {
-            console.log("guild with id \"" + guild.id + "\" set to default");
-            _s[guild.id] = _s["default"];
-        }
-    })
 });
 
 client.on(dc.Events.MessageCreate, async message => {
@@ -314,8 +312,9 @@ client.on(dc.Events.MessageCreate, async message => {
     }
     // #endregion
 
+    return;
     // #region counting and chain handler
-    if (message.channel.id === getServer(message).count.channel) {
+    if (message.channel.id === _s[message.guildId].count.channel) {
         var num = 0;
         var content = String(wordsToNumbers(message.content));
 
@@ -326,24 +325,24 @@ client.on(dc.Events.MessageCreate, async message => {
             return;
         }
         
-        if (getServer(message).count.lastCounter === message.author.id) {
+        if (_s[message.guildId].count.lastCounter === message.author.id) {
             resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
             return;
         }
 
-        if (num == getServer(message).count.currentNum + 1) {
+        if (num == _s[message.guildId].count.currentNum + 1) {
             message.react('✅');
-            getServer(message).count.lastCounter = message.author.id;
-            getServer(message).count.currentNum++;
+            _s[message.guildId].count.lastCounter = message.author.id;
+            _s[message.guildId].count.currentNum++;
         } else {
-            resetNumber(message, (getServer(message).count.prevNumber < 10) ?
+            resetNumber(message, (_s[message.guildId].count.prevNumber < 10) ?
                 'you can do better than THAT...' :
-                'you got pretty far. but i think you could definitely do better than ' + getServer(message).count.highestNum + '.'
+                'you got pretty far. but i think you could definitely do better than ' + _s[message.guildId].count.highestNum + '.'
             );
         }
-    } else if (message.channel.id === getServer(message).chain.channel) {
+    } else if (message.channel.id === _s[message.guildId].chain.channel) {
         chainFunc(message, 3);
-    } else if (getServer(message).chain.autoChain >= 0) {
+    } else if (_s[message.guildId].chain.autoChain >= 0) {
         //chainFunc(message, chain.autoChain);
     }
     // #endregion
@@ -577,6 +576,29 @@ const commands = {
         new Param("amount", `the amount you agree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
     ], []),
 
+    "false" : new Command("general/fun", "<:false:1123469352826576916>", async function (message, parameters) {
+        let reference;
+        try {
+            reference = await message.fetchReference();
+            await message.delete();
+        } catch {
+            await message.delete();
+            reference = await message.channel.messages.fetch({ limit: 1 });
+            reference = reference.first();
+        }
+        
+        for (let i = 0; i < Math.min(parameters["amount"], bigData.trueEmojis.length); i++) {
+            try {
+                await reference.react(bigData.trueEmojis[i]);
+            } catch (error) {
+                console.log("$true broke lol");
+                break;
+            }
+        }
+    }, [
+        new Param("amount", `the amount you disagree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
+    ], []),
+
     "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (message, parameters) {
         switch (parameters["fileType"]) {
             case 0: {
@@ -685,9 +707,9 @@ const commands = {
 
         // old stuff here
         let channelId = parameters["channel"] ? parameters["channel"] : message.channel.id;
-        let isChannel = getServer(message).chain.channel === channelId;
+        let isChannel = _s[message.guildId].chain.channel === channelId;
 
-        getServer(message).chain.channel = isChannel ? "" : channelId;
+        _s[message.guildId].chain.channel = isChannel ? "" : channelId;
         await client.channels.fetch(channelId)
             //@ts-ignore
             .then(x =>x.send(isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.'))
@@ -697,9 +719,9 @@ const commands = {
     ], [ "438296397452935169" ]),
 
     "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (message, parameters) {
-        getServer(message).chain.autoChain = parameters["howMany"];
-        console.log(getServer(message).chain.autoChain);
-        message.reply(makeReply(`autoChain is now ${getServer(message).chain.autoChain}.`));
+        _s[message.guildId].chain.autoChain = parameters["howMany"];
+        console.log(_s[message.guildId].chain.autoChain);
+        message.reply(makeReply(`autoChain is now ${_s[message.guildId].chain.autoChain}.`));
     }, [
         new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)
     ], [ "438296397452935169" ]),
@@ -717,7 +739,7 @@ const cmdCommands = {
         var response = [];
         
         function addToHelp(key) {
-            var com = commands[key];
+            var com = cmdCommands[key];
             var paramNames = Array.from(com.params, x => x.name);
 
             response.push(`$${key} (${paramNames.join(', ')}) : ${com.desc}\n`);
