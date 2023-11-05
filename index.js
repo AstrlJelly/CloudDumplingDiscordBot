@@ -299,6 +299,7 @@ client.on(dc.Events.MessageCreate, async message => {
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
     if (message.author.bot) return;
 
+
     var commandFromMessage = message.content.split(' ')[0].substring(config.prefix.length);
 
     // #region command handler
@@ -312,9 +313,10 @@ client.on(dc.Events.MessageCreate, async message => {
     }
     // #endregion
 
-    return;
     // #region counting and chain handler
-    if (message.channel.id === _s[message.guildId].count.channel) {
+    let count = _s[message.guildId].count;
+
+    if (message.channel.id === count.channel?.id) {
         var num = 0;
         var content = String(wordsToNumbers(message.content));
 
@@ -325,19 +327,21 @@ client.on(dc.Events.MessageCreate, async message => {
             return;
         }
         
-        if (_s[message.guildId].count.lastCounter === message.author.id) {
-            resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
-            return;
-        }
+        // if (count.lastCounter === message.author.id) {
+        //     resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
+        //     return;
+        // }
 
-        if (num == _s[message.guildId].count.currentNum + 1) {
+        console.log(num);
+        console.log(count.current);
+        if (num == count.current + 1) {
             message.react('✅');
-            _s[message.guildId].count.lastCounter = message.author.id;
-            _s[message.guildId].count.currentNum++;
+            count.lastCounter = message.author.id;
+            count.current++;
         } else {
-            resetNumber(message, (_s[message.guildId].count.prevNumber < 10) ?
+            resetNumber(message, (count.prevNumber < 10) ?
                 'you can do better than THAT...' :
-                'you got pretty far. but i think you could definitely do better than ' + _s[message.guildId].count.highestNum + '.'
+                'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
             );
         }
     } else if (message.channel.id === _s[message.guildId].chain.channel) {
@@ -614,8 +618,8 @@ const commands = {
                     fs.unlink(result, function(){});
                 } catch (error) {
                     console.error(error);
+                    await reaction.remove().catch(error => console.error('Failed to remove reactions:\n', error));
                     message.react('❌');
-                    reaction.remove().catch((/** @type {any} */ error) => console.error('Failed to remove reactions:\n', error));
                 }
                 
             } break;
@@ -670,7 +674,9 @@ const commands = {
         }
         message.react('✅');
 
-        if (channel.id === getServer(channel).count.channel.id) {
+        console.log(getServer(channel));
+        let countChannel = getServer(channel).count.channel;
+        if (countChannel != null && channel.id === countChannel.id) {
             channel.send(`counting in ${channel.name.toLowerCase()} has ceased.`);
             getServer(channel).count.channel = null;
         } else {
@@ -844,9 +850,10 @@ const cmdCommands = {
     "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message, parameters) {
         try {
             var guild = client.guilds.cache.get(parameters["guild"]);
-            var channel = guild?.channels.cache.get(parameters["channel"]);
-            // @ts-ignore
-            await channel.send(makeReply(parameters["message"]));
+            if (guild !== undefined) {
+                var channel = guild.channels.cache.get(parameters["channel"]);
+                await channel.send(makeReply(parameters["message"]));
+            }
         } catch (error) {
             message.reply(makeReply("dumbass\n"+error))
         }
@@ -862,6 +869,24 @@ const cmdCommands = {
     "kill" : new Command("bot", "kills the bot", async function (message, parameters) {
         await message.channel.send('bot is now dead 😢');
         await kill();
+    }, [],
+    [
+        "438296397452935169",
+        "705120334705197076",
+        "686222324860715014",
+    ]),
+
+    "test" : new Command("bot", "various things astrl will put in here to test node.js", async function (message, parameters) {
+        var obj = {
+            "obj" : {
+                lol : {
+                    newLol : 0
+                }
+            }
+        }
+        var newObj = obj["obj"].lol;
+        newObj.newLol = 5;
+        message.reply(makeReply(String (obj["obj"].lol.newLol)));
     }, [],
     [
         "438296397452935169",
