@@ -12,7 +12,8 @@ const { wordsToNumbers } = require('words-to-numbers');
 const { authenticate } = require('youtube-api');
 const { google } = require('googleapis');
 // @ts-ignore idk why this isn't importing correctly, but the code using it works fine
-const { evaluate, random } = require('mathjs');
+const { evaluate, random } = require('mathjs');  
+const decodeGif = require('decode-gif')
 
 // create a new discord client instance
 const client = new dc.Client({
@@ -852,7 +853,7 @@ const cmdCommands = {
             var guild = client.guilds.cache.get(parameters["guild"]);
             if (guild !== undefined) {
                 var channel = guild.channels.cache.get(parameters["channel"]);
-                await channel.send(makeReply(parameters["message"]));
+                await channel?.send(makeReply(parameters["message"]));
             }
         } catch (error) {
             message.reply(makeReply("dumbass\n"+error))
@@ -877,16 +878,10 @@ const cmdCommands = {
     ]),
 
     "test" : new Command("bot", "various things astrl will put in here to test node.js", async function (message, parameters) {
-        var obj = {
-            "obj" : {
-                lol : {
-                    newLol : 0
-                }
-            }
-        }
-        var newObj = obj["obj"].lol;
-        newObj.newLol = 5;
-        message.reply(makeReply(String (obj["obj"].lol.newLol)));
+        var url = message.attachments.first()?.url;
+        decodeGif(await fetch(url))
+
+        message.reply(makeReply(url));
     }, [],
     [
         "438296397452935169",
