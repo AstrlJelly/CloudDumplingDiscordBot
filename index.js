@@ -100,26 +100,28 @@ async function save() {
 
 async function load() {
     if (dontPersist) return;
-    fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
-        try {
-            let dataObj = JSON.parse(data);
-            for (const [key, value] of Object.entries(dataObj)) {
-                console.log(`${key}: ${value}`);
-                _s[key] = value;
+    let dataObj = {};
+    if (fs.existsSync("./persistence/users.json")) {
+        fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
+            try {
+                dataObj = JSON.parse(data)._s;
+                console.info("The file was loaded!");
+            } catch (error) {
+                console.error(error);
             }
-
-            client.guilds.cache.forEach(guild => {
-                if (!_s.hasOwnProperty(guild.id)) {
-                    console.log("guild with id \"" + guild.id + "\" set to default");
-                    _s[guild.id] = _s["default"];
-                }
-            })
-
-            console.info("The file was loaded!");
-        } catch (error) {
-            console.error(error);
+        }); 
+    }
+    
+    client.guilds.cache.forEach(guild => {
+        console.log ("server with id " + guild.id + " has the object : " + JSON.stringify(dataObj[guild.id]))
+        if (!dataObj.hasOwnProperty(guild.id)) { // if there's no server object
+            console.log("guild with id \"" + guild.id + "\" set to default");
+            _s[guild.id] = _s["default"];
+        } else {                            // if there is a server object
+            console.log("LOADED guild with id \"" + guild.id + "\"");
+            _s[guild.id] = dataObj[guild.id];
         }
-    }); 
+    })
 }
 
 async function kill() {
@@ -128,26 +130,22 @@ async function kill() {
     process.exit();
 }
 
+/**
+ * @param {{ guildId: String; }} param
+ */
 function getServer(param) {
-    var guild;
-    try {
-        guild = param.guild.id;
-    } catch (error) {
-        guild = param;
-    }
-
-    return _s[guild];
+    return _s[param];
 }
 
 function currentTime() {
-    return Math.round(performance.now() * 1000) / 1000;
-    // return parseFloat(performance.now().toFixed(3));
+    var parse = Math.round(performance.now() * 1000) / 1000
+    return parse;
 }
 
 // convertTime() will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
 // for now it defaults to milliseconds
 /**
- * @param {any} time
+ * @param {Number} time
  * @param {string} typeTo
  */
 function convertTime(time, typeTo, typeFrom = 'ms') {
@@ -232,10 +230,9 @@ let _s = {
             autoChain: 0,    // the amount of messages in any channel to start a chain
         },
 
-        send : {
-            channelConvo: "",  //
-            channel: "",       //
-            guild: "",         //
+        convo : {
+            convoChannel: null, // the channel people are speaking in
+            replyChannel: null, // the channel where you reply to the people speaking
         }
     },
 };
@@ -323,8 +320,15 @@ client.on(dc.Events.MessageCreate, async message => {
         try {
             num = evaluate(content);
         } catch (error) {
-            if (!Number(content[0])) console.error(error);
-            return;
+            if (Number(content[0])) {
+                var chars = [];
+                var i = 0;
+                while (!isNaN(parseInt(content[i])) && i < 50) {
+                    chars.push(content[i]);
+                    i++;
+                }
+                num = evaluate(chars.join(''));
+            } else return;
         }
         
         // if (count.lastCounter === message.author.id) {
@@ -332,12 +336,11 @@ client.on(dc.Events.MessageCreate, async message => {
         //     return;
         // }
 
-        console.log(num);
-        console.log(count.current);
         if (num == count.current + 1) {
             message.react('✅');
             count.lastCounter = message.author.id;
             count.current++;
+            console.log("count current : " + _s[message.guildId].count.current);
         } else {
             resetNumber(message, (count.prevNumber < 10) ?
                 'you can do better than THAT...' :
@@ -348,6 +351,28 @@ client.on(dc.Events.MessageCreate, async message => {
         chainFunc(message, 3);
     } else if (_s[message.guildId].chain.autoChain >= 0) {
         //chainFunc(message, chain.autoChain);
+    }
+    if (_s[message.guildId].convo.convoChannel?.id == message.channel.id) {
+        var reply = `${message.author.displayName}[:](${message.url})`
+        var replyChannel = _s[message.guildId].convo.replyChannel;
+        var files = [];
+        console.log("print before")
+        if (message.attachments.size > 0) {
+            message.attachments.forEach(async x => {
+                files.push(await fetch(x.url));
+            });
+            console.log("print middle")
+        }
+        console.log("print after")
+        replyChannel.send({
+            content : reply,
+            // allowedMentions: { repliedUser: message.mentions.members?.size !== 0 },
+            files: files
+        })
+        
+    } else if (_s[message.guildId].convo.replyChannel?.id == message.channel.id) {
+        console.log(message.content);
+        _s[message.guildId].convo.convoChannel.send(message.content);
     }
     // #endregion
 });
@@ -674,14 +699,14 @@ const commands = {
         }
         message.react('✅');
 
-        console.log(getServer(channel));
-        let countChannel = getServer(channel).count.channel;
+        console.log(_s[message.guildId]);
+        let countChannel = _s[message.guildId].count.channel;
         if (countChannel != null && channel.id === countChannel.id) {
             channel.send(`counting in ${channel.name.toLowerCase()} has ceased.`);
-            getServer(channel).count.channel = null;
+            _s[message.guildId].count.channel = null;
         } else {
             channel.send(`alright, count in ${channel.name.toLowerCase()}!`);
-            getServer(channel).count.channel = channel;
+            _s[message.guildId].count.channel = channel;
         }
     }, [
         new Param("channel", "the specific channel to start counting in", "")
@@ -703,12 +728,12 @@ const commands = {
         }
         message.react('✅');
 
-        if (channel.id === getServer(channel).count.channel.id) {
+        if (channel.id === getServer(channel.guildId).count.channel.id) {
             channel.send(`counting in ${channel.name.toLowerCase()} has ceased.`);
-            getServer(channel).count.channel = null;
+            getServer(channel.guildId).count.channel = null;
         } else {
             channel.send(`alright, count in ${channel.name.toLowerCase()}!`);
-            getServer(channel).count.channel = channel;
+            getServer(channel.guildId).count.channel = channel;
         }
 
         // old stuff here
@@ -794,6 +819,9 @@ const cmdCommands = {
         new Param("debug", "gets the specific component of a command", ""),
     ]),
 
+    "save" : new Command("bot", "saves the bot's data", async (message, parameters) => await save() ),
+    "load" : new Command("bot", "loads the bot's data", async (message, parameters) => await load() ),
+
     "eval" : new Command("general/fun", "astrl only!! runs javascript code from a string", async function (message, parameters) {
         try {
             let code = eval(parameters["code"])
@@ -852,7 +880,8 @@ const cmdCommands = {
             var guild = client.guilds.cache.get(parameters["guild"]);
             if (guild !== undefined) {
                 var channel = guild.channels.cache.get(parameters["channel"]);
-                await channel.send(makeReply(parameters["message"]));
+                // @ts-ignore typescript is annoying and will give me an error because of how GuildBasedChannel inherits its functions
+                await channel?.send(makeReply(parameters["message"]));
             }
         } catch (error) {
             message.reply(makeReply("dumbass\n"+error))
@@ -861,7 +890,24 @@ const cmdCommands = {
         new Param("message", "the message to send into the channel", "uh"),
         new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
         new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
-        new Param("convo", "have every message after this send a message into the specified channel?", false),
+    ], [
+        "438296397452935169",
+    ]),
+
+    "convo" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message, parameters) {
+        try {
+            var guild = client.guilds.cache.get(parameters["guild"]);
+            if (guild !== undefined) {
+                var channel = guild.channels.cache.get(parameters["channel"]);
+                _s[message.guildId].convo.convoChannel = channel
+                _s[message.guildId].convo.replyChannel = message.channel
+            }
+        } catch (error) {
+            message.reply(makeReply("dumbass\n"+error))
+        }
+    }, [
+        new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
+        new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
     ], [
         "438296397452935169",
     ]),
@@ -877,16 +923,8 @@ const cmdCommands = {
     ]),
 
     "test" : new Command("bot", "various things astrl will put in here to test node.js", async function (message, parameters) {
-        var obj = {
-            "obj" : {
-                lol : {
-                    newLol : 0
-                }
-            }
-        }
-        var newObj = obj["obj"].lol;
-        newObj.newLol = 5;
-        message.reply(makeReply(String (obj["obj"].lol.newLol)));
+        
+        message.reply(makeReply(""));
     }, [],
     [
         "438296397452935169",
