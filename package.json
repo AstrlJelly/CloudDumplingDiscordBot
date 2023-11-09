@@ -2,13 +2,14 @@
   "name": "clouddumplingdiscordbot",
   "version": "1.0.0",
   "description": "im gonna try making a discord bot for counting/chain channels",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
-    "test": "index.js"
+    "main": "index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "type": "module",
   "dependencies": {
     "@keyv/sqlite": "^3.6.5",
     "brain.js": "^2.0.0-beta.23",
@@ -29,5 +30,16 @@
   },
   "devDependencies": {
     "eslint": "^8.48.0"
+  },
+  "module": "./main/esm",
+  "exports": {
+    ".": {
+      "import": "./main/esm/index.js",
+      "require": "./main/es5/index.js"
+    },
+    "./number": {
+      "import": "./main/esm/number.js",
+      "require": "./main/es5/number.js"
+    }
   }
 }

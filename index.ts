@@ -1,22 +1,34 @@
 // Require the necessary discord.js classes
-// @ts-check
-const bigData = require('./bigData.json');
-const process = require('node:process');
-const config = require('./private/config.json');
-const fs = require('fs');
-const scp = require('node-scp');
-const dc = require('discord.js');
-const brain = require('brain.js');
-const { wordsToNumbers } = require('words-to-numbers');
-// @ts-ignore idk why this isn't importing correctly, but the code using it works fine
-const { authenticate } = require('youtube-api');
-const { google } = require('googleapis');
+// @ts-ignore
+import config from './private/config.json';
+import process from 'node:process';
+import fs from 'fs';
+import scp from 'node-scp';
+import dc from 'discord.js';
+import brain from 'brain.js';
 const mathjs = require('mathjs');
+import { wordsToNumbers } from 'words-to-numbers';
+import authenticate from 'youtube-api';
+import { google } from 'googleapis';
 
-// create a new discord client instance
-const client = new dc.Client({
-    intents: Array.from(bigData.intents, x => dc.GatewayIntentBits[x])
+const client = new dc.Client({ // create a new discord client instance
+    intents: Array.from(getBigData().intents, (x : string) => dc.GatewayIntentBits[x])
 });
+
+const trustedUsers : string[] = [ // only add to this if you FULLY TRUST THEM
+    "438296397452935169", // astrl (me)
+    "820357014831628309", // @12u3ie
+];
+
+const allTimeouts = []; // used to reinstate timeouts when the bot is restarted
+
+const dontPersist = false;
+
+function getBigData() {
+    if (fs.existsSync("./bigData.json")) {
+        return JSON.parse(fs.readFileSync("./bigData.json", 'utf-8')); 
+    }
+}
 
 // scp client, currently just for grabbing
 let remote_server = {
@@ -25,18 +37,13 @@ let remote_server = {
     username: 'opc',
 }
 if (fs.existsSync("./private/ssh.key")) {
-    remote_server.privateKey = fs.readFileSync('./private/ssh.key');
+    remote_server["privateKey"] = fs.readFileSync('./private/ssh.key');
 }
 
 let jermaFiles, jermaClips;
 let scpClient;
 
-let dontPersist = false;
-
-// used to reinstate timeouts when the bot is restarted
-const allTimeouts = [];
-
-function makeReply(content, ping = false, files = ['']) {
+function makeReply(content : string, ping = false, files = ['']) {
     try {
         if (typeof content !== typeof String) content = content.toString();
         var length = content.length;
@@ -46,41 +53,35 @@ function makeReply(content, ping = false, files = ['']) {
             content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
         }
         var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
-        if (files.length[0]) replyObj.files = files;
+        if (files.length[0]) replyObj["files"] = files;
         return replyObj;
     } catch (error) {
         console.error(error);
-        return { content : '' };
+        return { content : "guh" };
     }
 }
 
-/**
- * @param {string | dc.MessagePayload | dc.MessageReplyOptions} options
- */
-// dc.Message.prototype.reply = function(reply, ping, files) {
+// dc.Message.prototype.replyTo = function(reply : string, ping : boolean, files : string[]) {
 //     return this.reply()
 // }
 
-/**
- * @param {number} ms
- * @param {boolean} [name]
- */
-async function sleep(ms, name, push = true) {
-    var t;
-    return new Promise((resolve) => {
-        t = setTimeout(resolve, ms);
-        if (push) t = allTimeouts.push({ 
+// this function had a "name" parameter but i have no clue what it does 
+async function sleep(ms : number, push : boolean = true) {
+    var t = new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+        if (push) allTimeouts.push({ 
             timeout : t,
             startTime : Date.now(),
-            name : name,
+            // name : name,
         });
-    }).then(x => {if (push) allTimeouts.splice(t)});
+    });
+    return t;
 }
 
 async function autoSave() {
     await sleep(60000, false);
     console.log("Autosaving...");
-    await save().catch(error => console.error("Autosave failed!  \n" + error));
+    await save().catch(error => console.error("Autosave failed!\n" + error));
     autoSave();
 }
 
@@ -136,9 +137,7 @@ async function kill() {
     process.exit();
 }
 
-/**
- * @param {{ guildId: String; }} param
- */
+/** @param {{ guildId: String; }} param */
 function getServer(param) {
     return _s[param];
 }
@@ -150,11 +149,7 @@ function currentTime() {
 
 // convertTime() will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
 // for now it defaults to milliseconds
-/**
- * @param {Number} time
- * @param {string} typeTo
- */
-function convertTime(time, typeTo, typeFrom = 'ms') {
+function convertTime(time = 0, typeTo = 's', typeFrom = 'ms') {
     let typeFromNum = typeNum(typeFrom);
     let typeToNum = typeNum(typeTo);
     let newTime = time;
@@ -184,27 +179,28 @@ function convertTime(time, typeTo, typeFrom = 'ms') {
 }
 
 class Command {
-    /**
-     * @param {string} genre
-     * @param {string} desc
-     * @param {function} func
-     */
-    constructor(genre, desc, func, params = [], limitedTo = [], timeout = 0) {
+    genre : string
+    desc: string
+    func : { (message: any, p: any): Promise<void> };
+    params : Param[]
+    limitedTo: string[]
+    inf: boolean
+    timeout: Number
+    constructor(genre, desc, func, params = [], limitedTo = [], inf = false, timeout = 0) {
         this.genre = genre;
         this.desc = desc;
         this.func = func;
         this.params = params;
         this.limitedTo = limitedTo;
+        this.inf = inf;
         this.timeout = timeout;
     }
 }
 
 class Param {
-    /**
-     * @param {string} name
-     * @param {string} desc
-     * @param {string | number | boolean} preset
-     */
+    name: string
+    desc: string
+    preset: string | number | boolean
     constructor(name, desc, preset) {
         this.name = name;
         this.desc = desc;
@@ -308,7 +304,8 @@ client.on(dc.Events.MessageCreate, async message => {
     // #region command handler
     if (message.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
         if (sillyObj.hasOwnProperty(message.author.id) && Math.random() < 0.99) {
-            await commands["mock"].func(message, { "message" : message.id }, false);
+            // await commands["mock"].func(message, { "message" : message.id }, false);
+            message.reply("huh? speak up next time buddy.")
             return;
         }
         await parseCommand(message, message.content, commandFromMessage, commands);
@@ -397,7 +394,7 @@ async function parseCommand(message, content, command, comms)
     }
     var timeBefore = currentTime();
     var com = comms[command];
-    if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id)) {
+    if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id) || trustedUsers.includes(message.author.id)) {
         // #region parameter stuff
         var paramObj = {};
         const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
@@ -415,7 +412,7 @@ async function parseCommand(message, content, command, comms)
             tempParameters.shift();
 
             var j = 0;
-            for (var i = 0; i < Math.min(tempParameters.length, com.params.length); i++) {
+            for (var i = 0; i < com.inf ? Math.min(tempParameters.length, com.params.length) : tempParameters.length; i++) {
                 // god i miss conditional statements
                 function convParam(param, content) {
                     var preset = (typeof param.preset).toLowerCase();
@@ -477,8 +474,8 @@ const commands = {
     "help" : new Command("bot/support", "lists all commands", async function (message, p) {
         var response = [];
         
-        function addToHelp(key) {
-            var com = commands[key];
+        function addToHelp(key : string) {
+            var com : Command = commands[key];
             var paramNames = Array.from(com.params, x => x.name);
 
             response.push(`$${key} (${paramNames.join(', ')}) : ${com.desc}\n`);
@@ -570,7 +567,7 @@ const commands = {
         message.reply(makeReply(newStuff.join("\n")));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
-    ], []),
+    ], [], true),
 
     "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message, parameters) {
         try {
@@ -634,16 +631,16 @@ const commands = {
             reference = reference.first();
         }
         
-        for (let i = 0; i < Math.min(parameters["amount"], bigData.trueEmojis.length); i++) {
+        for (let i = 0; i < Math.min(parameters["amount"], getBigData().trueEmojis.length); i++) {
             try {
-                await reference.react(bigData.trueEmojis[i]);
+                await reference.react(getBigData().trueEmojis[i]);
             } catch (error) {
                 console.log("$true broke lol");
                 break;
             }
         }
     }, [
-        new Param("amount", `the amount you agree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
+        new Param("amount", `the amount you agree with this statement (capped at ${getBigData().trueEmojis.length})`, getBigData().trueEmojis.length),
     ], []),
 
     "false" : new Command("general/fun", "<:false:1123469352826576916>", async function (message, parameters) {
@@ -657,16 +654,16 @@ const commands = {
             reference = reference.first();
         }
         
-        for (let i = 0; i < Math.min(parameters["amount"], bigData.trueEmojis.length); i++) {
+        for (let i = 0; i < Math.min(parameters["amount"], getBigData().trueEmojis.length); i++) {
             try {
-                await reference.react(bigData.trueEmojis[i]);
+                await reference.react(getBigData().trueEmojis[i]);
             } catch (error) {
                 console.log("$true broke lol");
                 break;
             }
         }
     }, [
-        new Param("amount", `the amount you disagree with this statement (capped at ${bigData.trueEmojis.length})`, bigData.trueEmojis.length),
+        new Param("amount", `the amount you disagree with this statement (capped at ${getBigData().trueEmojis.length})`, getBigData().trueEmojis.length),
     ], []),
 
     "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (message, parameters) {
@@ -812,7 +809,7 @@ const cmdCommands = {
         var response = [];
         
         function addToHelp(key) {
-            var com = cmdCommands[key];
+            var com : Command = cmdCommands[key];
             var paramNames = Array.from(com.params, x => x.name);
 
             response.push(`$${key} (${paramNames.join(', ')}) : ${com.desc}\n`);
