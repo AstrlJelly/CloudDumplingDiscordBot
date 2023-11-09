@@ -11,9 +11,7 @@ const { wordsToNumbers } = require('words-to-numbers');
 // @ts-ignore idk why this isn't importing correctly, but the code using it works fine
 const { authenticate } = require('youtube-api');
 const { google } = require('googleapis');
-// @ts-ignore idk why this isn't importing correctly, but the code using it works fine
-const { evaluate, random } = require('mathjs');  
-const decodeGif = require('decode-gif')
+const mathjs = require('mathjs');
 
 // create a new discord client instance
 const client = new dc.Client({
@@ -38,16 +36,16 @@ let dontPersist = false;
 // used to reinstate timeouts when the bot is restarted
 const allTimeouts = [];
 
-function makeReply(content= '', ping = false, files = ['']) {
+function makeReply(content, ping = false, files = ['']) {
     try {
         if (typeof content !== typeof String) content = content.toString();
-        var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
-        var length = replyObj.content.length;
+        var length = content.length;
         if (length === 0) {
-            replyObj.content = "can't send an empty message!";
+            content = "can't send an empty message!";
         } else if (length > 2000) {
-            replyObj.content = replyObj.content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
+            content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
         }
+        var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
         if (files.length[0]) replyObj.files = files;
         return replyObj;
     } catch (error) {
@@ -55,6 +53,13 @@ function makeReply(content= '', ping = false, files = ['']) {
         return { content : '' };
     }
 }
+
+/**
+ * @param {string | dc.MessagePayload | dc.MessageReplyOptions} options
+ */
+// dc.Message.prototype.reply = function(reply, ping, files) {
+//     return this.reply()
+// }
 
 /**
  * @param {number} ms
@@ -319,7 +324,7 @@ client.on(dc.Events.MessageCreate, async message => {
         var content = String(wordsToNumbers(message.content));
 
         try {
-            num = evaluate(content);
+            num = mathjs.evaluate(content);
         } catch (error) {
             if (Number(content[0])) {
                 var chars = [];
@@ -328,7 +333,7 @@ client.on(dc.Events.MessageCreate, async message => {
                     chars.push(content[i]);
                     i++;
                 }
-                num = evaluate(chars.join(''));
+                num = mathjs.evaluate(chars.join(''));
             } else return;
         }
         
@@ -524,10 +529,45 @@ const commands = {
 
     "math" : new Command("general/fun", "does the math put in front of it", async function (message, parameters) {
         try {
-            message.reply(makeReply(String(evaluate(parameters["equation"]))));
+            message.reply(makeReply(String(mathjs.evaluate(parameters["equation"]))));
         } catch (error) {
             message.reply(makeReply(error));
         }
+    }, [
+        new Param("equation", "the equation to be evaluated", "undefined"),
+    ], []),
+
+    "mathClass" : new Command("general/fun", "this is for school lol", async function (message, parameters) {
+        // var nums = parameters["numbers"].split(' ');
+        // var feet = [];
+        // var inches = [];
+        // for (let i = 0; i < nums.length; i++) {
+        //     var foot = i % 2 == 0;
+        //     (foot ? feet : inches).push(Number (nums[i]));
+        // }
+        // var newStuff = [];
+        // for (let i = 0; i < feet.length; i++) {
+        //     var modRad = (((feet[i] * 12) + inches[i]) / (Math.PI * 2));
+        //     console.log(modRad);
+        //     newStuff.push(String ((4/3) * Math.PI * (Math.pow(modRad, 3))));
+        // }
+
+        // message.reply(makeReply(newStuff.join("\n")));
+        var nums = parameters["params"].split(' ');
+        var feet = [];
+        var inches = [];
+        for (let i = 0; i < nums.length; i++) {
+            var foot = i % 2 == 0;
+            (foot ? feet : inches).push(Number (nums[i]));
+        }
+        var newStuff = [];
+        for (let i = 0; i < feet.length; i++) {
+            var modRad = (((feet[i] * 12) + inches[i]) / (Math.PI * 2));
+            console.log(modRad);
+            newStuff.push(String ((4/3) * Math.PI * (Math.pow(modRad, 3))));
+        }
+
+        message.reply(makeReply(newStuff.join("\n")));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
     ], []),
@@ -598,7 +638,7 @@ const commands = {
             try {
                 await reference.react(bigData.trueEmojis[i]);
             } catch (error) {
-                console.log(makeReply("$true broke lol"));
+                console.log("$true broke lol");
                 break;
             }
         }
@@ -641,10 +681,11 @@ const commands = {
                     let index = Math.round(Math.random() * jermaFiles.length - 1);
                     await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result);
                     await message.channel.send({ files: [result] });
-                    fs.unlink(result, function(){});
+                    fs.unlink(result, ()=>{}); // lol it looks like a pensi
                 } catch (error) {
                     console.error(error);
-                    await reaction.remove().catch(error => console.error('Failed to remove reactions:\n', error));
+                    await reaction;
+                    await message.reactions.removeAll().catch(error => console.error('Failed to remove reactions:\n', error));
                     message.react('❌');
                 }
                 
@@ -925,10 +966,11 @@ const cmdCommands = {
 
     "test" : new Command("bot", "various things astrl will put in here to test node.js", async function (message, parameters) {
         var url = message.attachments.first()?.url;
-        decodeGif(await fetch(url))
 
         message.reply(makeReply(url));
-    }, [],
+    }, [
+        new Param("lol", "just for math class", "")
+    ],
     [
         "438296397452935169",
         "705120334705197076",
