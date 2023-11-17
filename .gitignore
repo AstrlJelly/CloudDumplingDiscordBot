@@ -95,3 +95,6 @@ config.json
 ssh-key-2022-09-19.key
 ssh.key
 private/
+
+# duhhh
+index.js
