@@ -26,8 +26,8 @@ const allTimeouts = []; // used to reinstate timeouts when the bot is restarted
 const dontPersist = false;
 
 function getBigData() {
-    if (fs.existsSync("./bigData.json")) {
-        return JSON.parse(fs.readFileSync("./bigData.json", 'utf-8')); 
+    if (fs.existsSync("./big-data.json")) {
+        return JSON.parse(fs.readFileSync("./big-data.json", 'utf-8')); 
     } else {
         console.error("bigData doesn't exist?!!?!? fix that. now. ---------------------------------------------------------------------------------------")
     }
