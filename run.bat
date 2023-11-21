@@ -1,1 +1,0 @@
-npx swc ./index.ts --out-dir ./ && node ./index.js

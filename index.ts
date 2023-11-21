@@ -25,12 +25,25 @@ const allTimeouts = []; // used to reinstate timeouts when the bot is restarted
 
 const dontPersist = false;
 
+let bigDataTemp = null;
+
+// exists because i don't want so much data in memory, but 
 function getBigData() {
     if (fs.existsSync("./big-data.json")) {
-        return JSON.parse(fs.readFileSync("./big-data.json", 'utf-8')); 
+        if (!bigDataTemp) {
+            bigDataTemp = JSON.parse(fs.readFileSync("./big-data.json", 'utf-8'))
+            wipeBigData();
+        }
+        return bigDataTemp;
+
     } else {
-        console.error("bigData doesn't exist?!!?!? fix that. now. ---------------------------------------------------------------------------------------")
+        console.error("big-data doesn't exist?!!?!? fix that. now.")
     }
+}
+
+async function wipeBigData() {
+    await sleep(10000, false);
+    bigDataTemp = null;
 }
 
 // scp client, currently just for grabbing
@@ -46,23 +59,23 @@ if (fs.existsSync("./private/ssh.key")) {
 let jermaFiles: string | any[], jermaClips: string | any[];
 let scpClient: scp.ScpClient;
 
-dc.Message.prototype["replyTo"] = function (content : string, ping : boolean = false, files : string[] = []) {
-    try {
-        if (typeof content !== typeof String) content = content.toString();
-        var length = content.length;
-        if (length === 0) {
-            content = "can't send an empty message!";
-        } else if (length > 2000) {
-            content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
-        }
-        var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
-        if (files.length[0]) replyObj["files"] = files;
-        return replyObj;
-    } catch (error) {
-        console.error(error);
-        return { content : "guh" };
-    }
-}
+// dc.Message.prototype.replyTo = function (content : string, ping : boolean = false, files : string[] = []) {
+//     try {
+//         if (typeof content !== typeof String) content = content.toString();
+//         var length = content.length;
+//         if (length === 0) {
+//             content = "can't send an empty message!";
+//         } else if (length > 2000) {
+//             content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
+//         }
+//         var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
+//         if (files.length[0]) replyObj["files"] = files;
+//         return this.reply(replyObj);
+//     } catch (error) {
+//         console.error(error);
+//         return { content : "guh" };
+//     }
+// }
 
 function makeReply(content : string, ping = false, files = [''])  {
     try {
@@ -71,7 +84,7 @@ function makeReply(content : string, ping = false, files = [''])  {
         if (length === 0) {
             content = "can't send an empty message!";
         } else if (length > 2000) {
-            content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
+            // content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
         }
         var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
         if (files.length[0]) replyObj["files"] = files;
@@ -82,11 +95,7 @@ function makeReply(content : string, ping = false, files = [''])  {
     }
 }
 
-// dc.Message.prototype.replyTo = function(reply : string, ping : boolean, files : string[]) {
-//     return this.reply()
-// }
-
-// this function had a "name" parameter but i have no clue what it does 
+// this function had a "name" parameter but i have no clue what it was supposed to do 
 async function sleep(ms : number, push : boolean = true) : Promise<void> {
     var t = new Promise<void>((resolve) => {
         setTimeout(resolve, ms);
@@ -144,7 +153,7 @@ async function load() {
         console.log ("server with id " + guild.id + " has the object : " + JSON.stringify(dataObj[guild.id]))
         if (!dataObj.hasOwnProperty(guild.id)) { // if there's no server object
             console.log("guild with id \"" + guild.id + "\" set to default");
-            _s[guild.id] = _s["default"];
+            _s[guild.id] = Object.create(_s["default"]);
         } else {                            // if there is a server object
             console.log("LOADED guild with id \"" + guild.id + "\"");
             _s[guild.id] = dataObj[guild.id];
@@ -158,8 +167,7 @@ async function kill() {
     process.exit();
 }
 
-/** @param {{ guildId: String; }} param */
-function getServer(param) {
+function getServer(param: string) {
     return _s[param];
 }
 
@@ -170,45 +178,32 @@ function currentTime() {
 
 // convertTime() will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
 // for now it defaults to milliseconds
-function convertTime(time = 0, typeTo = 's', typeFrom = 'ms') {
-    let typeFromNum = typeNum(typeFrom);
-    let typeToNum = typeNum(typeTo);
-    let newTime = time;
-    function typeNum(from: string) {
-        switch (from) {
-            case 's': return 1;
-            case 'm': return 2;
-            case 'h': return 3;
-            case 'd': return 4;
-            default: return 0;
-        }
+function convertTime(time = 0, typeFrom = 's', typeTo = 'ms') {
+    if (typeTo === typeFrom) return time;
+
+    let modifier = 1;
+    var times =    [ 'ms', 's', 'm', 'h', 'd', 'w' ];
+    var converts = [ 1000, 60,  60,  24,   7       ];
+    let typeFromNum = times.indexOf(typeFrom);
+    let typeToNum = times.indexOf(typeTo);
+
+    for (let i = mathjs.min(typeFromNum, typeToNum); i < mathjs.max(typeFromNum, typeToNum); i++) {
+        modifier *= converts[i];
     }
 
-    if (typeFromNum === typeToNum) return time;
-
-    var max = Math.max(typeToNum, typeFromNum);
-    var min = Math.min(typeToNum, typeFromNum);
-    var toMax = max === typeToNum;
-    console.log(`typeFromNum : ${typeFromNum}, typeToNum : ${typeToNum}`);
-    for (var i = min; i < max; (toMax ? i++ : i--)) {
-        console.log(i);
-        var num = i === 0 ? 1000 : (i === 1 || i === 2 ? 60 : 24);
-        newTime = toMax ? (newTime * num) : (newTime / num);
-    }
-    console.log(`currently waiting for ${time} ${typeTo} (${newTime} ${typeFrom})`);
-    return newTime;
+    return (typeFromNum > typeToNum) ? (time * modifier) : (time / modifier);
 }
 
 class Command {
     genre : string
     desc: string
-    func : { (message: any, p: any): Promise<void> };
+    func : { (message: dc.Message<boolean>, p: any): Promise<void> };
     params : Param[]
     limitedTo: string[]
     inf: boolean
     timeout: number
     currentTimeout: number
-    constructor(genre, desc, func, params = [], limitedTo = [], inf = false, timeout = 0) {
+    constructor(genre: string, desc: string, func, params: Param[] = [], limitedTo = [], inf = false, timeout = 0) {
         this.genre = genre;
         this.desc = desc;
         this.func = func;
@@ -223,11 +218,13 @@ class Command {
 class Param {
     name: string
     desc: string
-    preset: string | number | boolean
-    constructor(name: string, desc: string, preset: string | number | boolean) {
+    preset: any
+    type: any
+    constructor(name: string, desc: string, preset: any, type: any = null) {
         this.name = name;
         this.desc = desc;
         this.preset = preset;
+        this.type = type ?? typeof preset;
     }
 }
 
@@ -263,7 +260,11 @@ let _s = {
         }
     },
 };
-let _u = {};
+let _u = {
+    "default" : {
+
+    }
+};
 
 process.on('SIGINT', async () => {
     await kill();
@@ -316,31 +317,35 @@ client.on(dc.Events.MessageCreate, async (message) => {
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
     if (message.author.bot) return;
 
-
     var commandFromMessage = message.content.split(' ')[0].substring(config.prefix.length);
     var id = message.author.id;
+
+    if (!_u.hasOwnProperty(id)) {
+        _u[id] = Object.create(_u["default"]);
+    }
 
     // #region command handler
     if (message.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
         // 5% chance to happen, if this person is in sillyObj
-        if (sillyObj.hasOwnProperty(id) && ((sillyObj[id] == 0 && Math.random() < 0.95) || sillyObj[id] > 0)) {
+        if (sillyObj.hasOwnProperty(id) && ( (sillyObj[id] === 0 && mathjs.random()) || sillyObj[id] > 0)) {
             switch (sillyObj[id]) {
                 case 0:
                     await message.reply("huh? speak up next time buddy.");
                     sillyObj[id]++;
                     return;
                 case 1:
-                    if (message.content != message.content.toUpperCase()) {
-                        await message.reply("i told you to speak up. so uhh... do that.");
-                        sillyObj[id]++;
+                    if (message.content === message.content.toUpperCase()) {
+                        sillyObj[id] = 0;
+                    } else {
+                        await message.reply("SPEAK UP!!! CAN'T HEAR YOU!!!!");
                     }
-                    break;
-                case 2:
-                    if (message.content != message.content.toUpperCase()) {
-                        await message.reply("🐱‍👓");
-                        sillyObj[id]++;
-                    }
-                    break;
+                    return;
+                // case 2:
+                //     if (message.content !== message.content.toUpperCase()) {
+                //         await message.reply("🐱‍👓");
+                //         sillyObj[id]++;
+                //     }
+                //     return;
                 default:
                     sillyObj[id] = 0;
                     break;
@@ -377,7 +382,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
             return;
         }
 
-        if (num == count.current + 1) {
+        if (num === count.current + 1) {
             message.react('✅');
             count.lastCounter = id;
             count.current++;
@@ -393,10 +398,10 @@ client.on(dc.Events.MessageCreate, async (message) => {
     } else if (_s[message.guildId].chain.autoChain >= 0) {
         //chainFunc(message, chain.autoChain);
     }
-    if (_s[message.guildId].convo.convoChannel?.id == message.channel.id) {
+    if (_s[message.guildId].convo.convoChannel?.id === message.channel.id) {
         var replyChannel = _s[message.guildId].convo.replyChannel;
         replyChannel.send(makeReply(`${message.author.displayName}[:](${message.url})`));
-    } else if (_s[message.guildId].convo.replyChannel?.id == message.channel.id) {
+    } else if (_s[message.guildId].convo.replyChannel?.id === message.channel.id) {
         console.log(message.content);
         _s[message.guildId].convo.convoChannel.send(message.content);
     }
@@ -417,43 +422,33 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
         if (com.currentTimeout > dateNow) {
             var timeToWait = com.currentTimeout - dateNow;
             var timeToWaitReply = timeToWait < 1000 ? timeToWait + " milliseconds" : mathjs.round(timeToWait / 1000) + " seconds";
-            var timeoutReply = await message.reply({
-                content : "gotta wait " + timeToWaitReply + ". lol."
-            });
+            var timeoutReply = await message.reply(makeReply("gotta wait " + timeToWaitReply + ". lol."));
             await sleep(timeToWait);
             timeoutReply.delete();
             return com;
         }
         // #region parameter stuff
         var paramObj = {};
-        const space = '|'; // for consistency; will always use the same character(s) for replacing spaces
+        const space = '↭'; // will always use the same character for replacing spaces (also look at that freak. why he so wobbly)
         var tempParameters: string[] = [];
-        if (content.indexOf(' ') > -1) {
+        if (content.indexOf(' ') > -1) { // if message contains space, grab as parameters
             var sections = content.split('"');
             if (content.indexOf('"') > -1) {
                 for (var i = 0; i < sections.length; i++) {
-                    if (i % 2 == 1 && sections[i].indexOf(' ') > -1) {
+                    if (i % 2 === 1 && sections[i].indexOf(' ') > -1) {
                         sections[i] = sections[i].split(' ').join(space);
                     }
                 }
             }
             tempParameters = sections.join('').split(' ');
-            tempParameters.shift();
+            tempParameters.shift(); // remove the command from the parameters
 
             var j = 0;
             console.log(com.inf);
             for (var i = 0; i < (com.inf ? tempParameters.length : Math.min(tempParameters.length, com.params.length)); i++) {
-                // god i miss conditional statements
-                function convParam(param: Param, content: string) {
-                    var preset = (typeof param.preset).toLowerCase();
-                    switch (preset) {
-                        case "string": return String(content);
-                        case "number": return Number(content);
-                        case "boolean": return (content[0].toLowerCase() == 't');
-                        default:
-                            console.error(`uh oh!! that's not real.\ntype of ${preset} on parameter ${param.name} of command ${command} is invalid.`)
-                            return undefined;
-                    }
+                function convParam(content: string, param: Param) { // would be a one liner if "false" wasn't true
+                    var isBool = (typeof param.type) === (typeof Boolean);
+                    return isBool ? content === "true" : content as (typeof param.type);
                 }
                 // convert space character back to actual spaces, if it needs them
                 if (tempParameters[i].indexOf(space) > -1) {
@@ -465,10 +460,11 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                     var param = com.params.find(x => x.name === halves[0]);
 
                     if (Boolean(param)) {
-                        paramObj[halves[0]] = convParam(param, halves[1]) ?? param.preset;
+                        paramObj[halves[0]] = (halves[1] as (typeof param.type)) ?? param.preset;
                     }
                 } else {
-                    paramObj[com.params[j].name] = convParam(com.params[j], tempParameters[i]);
+                    var param = com.params[j];
+                    paramObj[param.name] = convParam(tempParameters[i], param)
                     j++;
                 }
             }
@@ -507,8 +503,8 @@ function listCommands(commandObj : object, listDescs : boolean = false, singleCo
     var coms : string[] = singleCom ? [ singleCom ] : Object.keys(commandObj);
     for (let i = 0; i < coms.length; i++) {
         var com : Command = commandObj[coms[i]];
-        var hidden = com.genre == "hidden";
-        if (showHidden != 1 && ((hidden && showHidden == 0) || (!hidden && showHidden == 2))) continue;
+        var hidden = com.genre === "hidden";
+        if (showHidden !== 1 && ((hidden && showHidden === 0) || (!hidden && showHidden === 2))) continue;
         var paramNames = Array.from(com.params, x => x.name);
 
         response.push(`$${coms[i]} (${paramNames.join(', ')}) : ${com.desc}\n`);
@@ -551,7 +547,7 @@ const commands = {
         var feet = [];
         var inches = [];
         for (let i = 0; i < nums.length; i++) {
-            var foot = i % 2 == 0;
+            var foot = i % 2 === 0;
             (foot ? feet : inches).push(Number (nums[i]));
         }
         var newStuff = [];
@@ -567,7 +563,7 @@ const commands = {
         // var feet = [];
         // var inches = [];
         // for (let i = 0; i < nums.length; i++) {
-        //     var foot = i % 2 == 0;
+        //     var foot = i % 2 === 0;
         //     (foot ? feet : inches).push(Number (nums[i]));
         // }
         // var newStuff = [];
@@ -584,7 +580,9 @@ const commands = {
 
     "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message: dc.Message<boolean>, parameters) {
         try {
-            await sleep(convertTime(parameters["waitValue"], parameters["waitType"], 'ms'));
+            var time = convertTime(parameters["waitValue"], parameters["waitType"]);
+            console.log(time);
+            await sleep(time);
             message.channel.send(parameters["reply"]);
             if (parameters["delete"]) message.delete();
         } catch (error) {
@@ -609,9 +607,9 @@ const commands = {
 
         const mock = [];
         for (let i = 0; i < toMock.length; i++) {
-            let vary = i % 2 == 0;
+            let vary = i % 2 === 0;
             // if (parameters["variance"] !== 0) {
-            //     let vary = i % 2 == 0;
+            //     let vary = i % 2 === 0;
             // }
 
             // let vary;
@@ -695,7 +693,7 @@ const commands = {
                     let index = Math.round(Math.random() * jermaFiles.length - 1);
                     await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result);
                     await message.channel.send({ files: [result] });
-                    fs.unlink(result, ()=>{}); // lol it looks like a pensi
+                    fs.unlink(result, ()=>{}); // lol it looks like a penis
                 } catch (error) {
                     console.error(error);
                     await reaction;
@@ -707,7 +705,7 @@ const commands = {
                 if (!jermaClips) {
                     var tempClips = await google.youtube('v3').playlistItems.list({
                         auth: authenticate({ key: config.ytApiKey, type: "key" }),
-                        part: [ 'id', 'snippet' ], playlistId: 'PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj', maxResults: 500,
+                        part: [ 'id', 'snippet' ], playlistId: 'PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj', maxResults: 1000,
                     });
                     console.log("tempClips type : " + typeof tempClips)
                     jermaClips = tempClips.data.items;
@@ -755,16 +753,11 @@ const commands = {
             }
         }
         message.react('✅');
-
-        console.log(_s[message.guildId]);
+        
         let countChannel = _s[message.guildId].count.channel;
-        if (countChannel != null && channel.id === countChannel.id) {
-            await channel.send(`counting in ${channel.name.toLowerCase()} has ceased.`);
-            _s[message.guildId].count.channel = null;
-        } else {
-            await channel.send(`alright, count in ${channel.name.toLowerCase()}!`);
-            _s[message.guildId].count.channel = channel;
-        }
+        let test = countChannel !== null && channel.id === countChannel.id;
+        await channel.send(test ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
+        _s[message.guildId].count.channel = test ? null : channel;
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], ["438296397452935169"]),
@@ -815,7 +808,6 @@ const commands = {
 
     "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (message: dc.Message<boolean>, parameters) {
         var cont = message.content.substring(message.content.indexOf(' ') + 1)
-        console.log("cont : " + cont);
         parseCommand(message, cont, cont.split(' ')[0], cmdCommands);
     }, [], [ "438296397452935169" ]),
 }
