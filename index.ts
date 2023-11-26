@@ -23,7 +23,7 @@ const trustedUsers : string[] = [ // only add to this if you FULLY TRUST THEM
 
 const allTimeouts = []; // used to reinstate timeouts when the bot is restarted
 
-const dontPersist = false;
+const PERSIST = true;
 
 let bigDataTemp = null;
 
@@ -116,7 +116,7 @@ async function autoSave() {
 }
 
 async function save() {
-    if (dontPersist) return;
+    if (!PERSIST) return;
     fs.writeFile("./persistence/users.json", JSON.stringify({
         _s : _s,
         _u : _u,
@@ -136,29 +136,29 @@ async function save() {
 }
 
 async function load() {
-    if (dontPersist) return;
+    if (!PERSIST) return;
     let dataObj = {};
-    if (fs.existsSync("./persistence/users.json")) {
-        fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
+    fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
+        if (!err) {
             try {
                 dataObj = JSON.parse(data)._s;
                 console.info("The file was loaded!");
             } catch (error) {
                 console.error(error);
             }
-        }); 
-    }
-    
-    client.guilds.cache.forEach(guild => {
-        console.log ("server with id " + guild.id + " has the object : " + JSON.stringify(dataObj[guild.id]))
-        if (!dataObj.hasOwnProperty(guild.id)) { // if there's no server object
-            console.log("guild with id \"" + guild.id + "\" set to default");
-            _s[guild.id] = Object.create(_s["default"]);
-        } else {                            // if there is a server object
-            console.log("LOADED guild with id \"" + guild.id + "\"");
-            _s[guild.id] = dataObj[guild.id];
         }
-    })
+
+        console.log(dataObj);
+        client.guilds.cache.forEach(guild => {
+            if (!dataObj.hasOwnProperty(guild.id)) { // if there's no server object
+                console.log("guild with id \"" + guild.id + "\" set to default");
+                _s[guild.id] = JSON.parse(JSON.stringify(_s["default"])); // this might be a terrible idea but it Just Works
+            } else {                                 // if there is a server object
+                console.log("LOADED guild with id \"" + guild.id + "\"");
+                _s[guild.id] = dataObj[guild.id];
+            }
+        })
+    });
 }
 
 async function kill() {
@@ -177,7 +177,6 @@ function currentTime() {
 }
 
 // convertTime() will mean you can convert from seconds to minutes, hours to ms, minutes to days, etc.
-// for now it defaults to milliseconds
 function convertTime(time = 0, typeFrom = 's', typeTo = 'ms') {
     if (typeTo === typeFrom) return time;
 
@@ -224,7 +223,7 @@ class Param {
         this.name = name;
         this.desc = desc;
         this.preset = preset;
-        this.type = type ?? typeof preset;
+        this.type = typeof (type ?? preset);
     }
 }
 
@@ -310,10 +309,6 @@ client.once(dc.Events.ClientReady, async c => {
 });
 
 client.on(dc.Events.MessageCreate, async (message) => {
-    // if (!counts || !chains) {
-    //     counts[message.guildId] = ;
-    //     chains[message.guildId] = ;
-    // }
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
     if (message.author.bot) return;
 
@@ -321,7 +316,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
     var id = message.author.id;
 
     if (!_u.hasOwnProperty(id)) {
-        _u[id] = Object.create(_u["default"]);
+        _u[id] = JSON.parse(JSON.stringify(_u["default"]));
     }
 
     // #region command handler
@@ -337,15 +332,15 @@ client.on(dc.Events.MessageCreate, async (message) => {
                     if (message.content === message.content.toUpperCase()) {
                         sillyObj[id] = 0;
                     } else {
-                        await message.reply("SPEAK UP!!! CAN'T HEAR YOU!!!!");
+                        var replies : string[] = [
+                            "SPEAK UP!!! CAN'T HEAR YOU!!!!",
+                            "dude what did i JUST tell you. ugh.",
+                            "*ALL*. *UPPERCASE*. OR ELSE I *CAN'T* HEAR YOU",
+                            "",
+                        ]
+                        await message.reply(replies[mathjs.randomInt(0, replies.length)]);
                     }
                     return;
-                // case 2:
-                //     if (message.content !== message.content.toUpperCase()) {
-                //         await message.reply("🐱‍👓");
-                //         sillyObj[id]++;
-                //     }
-                //     return;
                 default:
                     sillyObj[id] = 0;
                     break;
@@ -416,39 +411,51 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
     }
     var timeBefore = currentTime();
     var com : Command = comms[command];
+
+    // parse command if it's not limited to anybody, if it's limited to the person who sent the message, or if they're a fully trusted user
     if (com.limitedTo.length === 0 || com.limitedTo.includes(message.author.id) || trustedUsers.includes(message.author.id)) {
-        var dateNow = Date.now();
-        // console.log(com.currentTimeout + " > " + dateNow + " is " + String(com.currentTimeout > dateNow));
-        if (com.currentTimeout > dateNow) {
+        var dateNow = Date.now(); // actually really good for global time so that i don't need to persist it
+        if (com.currentTimeout > dateNow) { // handle command timeout if needed, will send a message to tell the commander there's a timeout then delete once the command is ready, or in 5 seconds
             var timeToWait = com.currentTimeout - dateNow;
             var timeToWaitReply = timeToWait < 1000 ? timeToWait + " milliseconds" : mathjs.round(timeToWait / 1000) + " seconds";
             var timeoutReply = await message.reply(makeReply("gotta wait " + timeToWaitReply + ". lol."));
-            await sleep(timeToWait);
+            await sleep(mathjs.min(timeToWait, convertTime(5, 's', 'ms'))); // hurrah for convertTime()
             timeoutReply.delete();
             return com;
         }
-        // #region parameter stuff
-        var paramObj = {};
+        //// #region parameter stuff
+        var paramObj = {}; // an object with the values of parameters assigned to the name of parameters
         const space = '↭'; // will always use the same character for replacing spaces (also look at that freak. why he so wobbly)
-        var tempParameters: string[] = [];
-        if (content.indexOf(' ') > -1) { // if message contains space, grab as parameters
-            var sections = content.split('"');
+        if (content.indexOf(' ') > -1) { // if message contains space, assume it contains parameters
+            var tempParameters: string[] = [];
+            
             if (content.indexOf('"') > -1) {
-                for (var i = 0; i < sections.length; i++) {
+                var sections = content.split('"');
+                for (var i = 0; i < sections.length; i++) { 
+                    // every other section will be in double quotes, so just use modulo. also check if it actually has spaces needed to be replaced
                     if (i % 2 === 1 && sections[i].indexOf(' ') > -1) {
-                        sections[i] = sections[i].split(' ').join(space);
+                        sections[i] = sections[i].split(' ').join(space); // most reliable way to replace all spaces with the temporary space character
                     }
                 }
+                tempParameters = sections.join('').split(' '); // join everything back together then split it up as parameters
+            } else {
+                tempParameters = content.split(' ');
             }
-            tempParameters = sections.join('').split(' ');
-            tempParameters.shift(); // remove the command from the parameters
+            
+            tempParameters.shift(); // remove the first element (the command) from the parameters
 
-            var j = 0;
+            var j = 0; // funny second iterator variable
             console.log(com.inf);
             for (var i = 0; i < (com.inf ? tempParameters.length : Math.min(tempParameters.length, com.params.length)); i++) {
-                function convParam(content: string, param: Param) { // would be a one liner if "false" wasn't true
-                    var isBool = (typeof param.type) === (typeof Boolean);
-                    return isBool ? content === "true" : content as (typeof param.type);
+                // i've searched so much but this is the best way i can find to convert to the preset's type
+                function convParam(content: string, param: Param) : any {
+                    switch (param.type) {
+                        case "string" : return String(content); // just for safety :)
+                        case "number" : return Number(content);
+                        case "boolean": return content === "true";
+                        default: console.error("type " + param.type + " not supported! did something go wrong or do you need to add another case?"); 
+                            break;
+                    }
                 }
                 // convert space character back to actual spaces, if it needs them
                 if (tempParameters[i].indexOf(space) > -1) {
@@ -457,10 +464,11 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                 // decides if the current param is being manually set or not, and assigns the paramObj accordingly
                 if (tempParameters[i].indexOf(':') > -1) {
                     var halves = tempParameters[i].split(':');
-                    var param = com.params.find(x => x.name === halves[0]);
+                    var paramNum = Number(halves[0]);
+                    var param = isNaN(paramNum) ? com.params.find(x => x.name === halves[0]) : com.params[paramNum];
 
                     if (Boolean(param)) {
-                        paramObj[halves[0]] = (halves[1] as (typeof param.type)) ?? param.preset;
+                        paramObj[param.name] = convParam(halves[1], param) ?? param.preset;
                     }
                 } else {
                     var param = com.params[j];
@@ -469,7 +477,7 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                 }
             }
         }
-        // #endregion
+        //// #endregion
 
         // if parameter is not set, use the preset
         com.params.forEach((x: Param) => {
@@ -511,7 +519,7 @@ function listCommands(commandObj : object, listDescs : boolean = false, singleCo
         
         if (listDescs) {
             var params = [];
-            com.params.forEach(x => params.push(`-${x.name} : ${x.desc}\n`));
+            com.params.forEach(x => params.push(`-${x.name} (${String(x.type)}) : ${x.desc}\n`));
             response.push(params.join(''));
         }
     }
@@ -531,7 +539,7 @@ const commands = {
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
     ], []),
- 
+
     "math" : new Command("general/fun", "does the math put in front of it", async function (message: dc.Message<boolean>, parameters) {
         try {
             message.reply(makeReply(String(mathjs.evaluate(parameters["equation"]))));
@@ -808,7 +816,7 @@ const commands = {
 
     "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (message: dc.Message<boolean>, parameters) {
         var cont = message.content.substring(message.content.indexOf(' ') + 1)
-        parseCommand(message, cont, cont.split(' ')[0], cmdCommands);
+        await parseCommand(message, cont, cont.split(' ')[0], cmdCommands);
     }, [], [ "438296397452935169" ]),
 }
 
@@ -927,8 +935,8 @@ const cmdCommands = {
     }, [], []),
 
     "test" : new Command("bot", "various things astrl will put in here to test node.js", async function (message: dc.Message<boolean>, p) {
-        var reply = listCommands(commands, false, "", p["lol"]);
-        message.reply(makeReply(reply));
+        // var reply = listCommands(commands, false, "", p["lol"]);
+        // message.reply(makeReply(reply));
     }, [
         new Param("lol", "just for math class", 0)
     ],
