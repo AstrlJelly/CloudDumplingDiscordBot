@@ -4,6 +4,10 @@
         "module": "nodenext",
         "resolveJsonModule": true,
     },
+    "files": [
+        "./index.ts",
+        "./commands.ts",
+    ],
     "resolveJsonModule" : true,
     "exclude": ["node_modules"],
     "editor.codeActionsOnSave": {
