@@ -5,7 +5,6 @@ import scp from 'node-scp';
 import dc from 'discord.js';
 // import brain from 'brain.js';
 import * as mathjs from 'mathjs';
-import authenticate from 'youtube-api';
 import { wordsToNumbers } from 'words-to-numbers';
 import { google } from 'googleapis';
 
@@ -77,9 +76,9 @@ let scpClient: scp.ScpClient;
 //     }
 // }
 
-function makeReply(content : string, ping = false, files = [''])  {
+function makeReply(cont : string | number | boolean, ping = false, files = [''])  {
     try {
-        if (typeof content !== typeof String) content = content.toString();
+        var content = cont.toString();
         var length = content.length;
         if (length === 0) {
             content = "can't send an empty message!";
@@ -148,7 +147,28 @@ async function load() {
             }
         }
 
-        console.log(dataObj);
+        function defaultCheck(obj : object, objAdd : object, root : string) {
+            var keys = Object.keys(obj); // get the keys of the inputted object's default
+            for (let i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                // var value = obj[key];
+                if (typeof obj[key] === 'object' && obj[key] !== null) { // if it's an object, set up the root and iterate through it
+                    var newKey = (root === "") ? (key) : (root + "/" + key)
+                    defaultCheck(obj[key], objAdd, newKey + "/")
+                } else {                                                 // otherwise just add it to the object to check it
+                    objAdd[root + key] = obj[key];
+                }
+            }
+        }
+
+        var dataCheck = {};
+        defaultCheck(dataObj["default"], dataCheck, "")
+        var serverObj = {};
+        defaultCheck(_s["default"], serverObj, "")
+
+        console.log(JSON.stringify(dataCheck, null, "\t"));
+        console.log(JSON.stringify(serverObj, null, "\t"));
+
         client.guilds.cache.forEach(guild => {
             if (!dataObj.hasOwnProperty(guild.id)) { // if there's no server object
                 console.log("guild with id \"" + guild.id + "\" set to default");
@@ -204,13 +224,13 @@ class Command {
     inf: boolean
     timeout: number
     currentTimeout: number
-    constructor(genre: string, desc: string, func, params: Param[] = [], limitedTo = [], inf = false, timeout = 0) {
+    constructor(genre: string, desc: string, func, params: Param[] = [], limitedTo = [], permissions = [], inf = false, timeout = 0) {
         this.genre = genre;
         this.desc = desc;
         this.func = func;
         this.params = params;
         this.limitedTo = limitedTo;
-        this.permissions = limitedTo;
+        this.permissions = permissions;
         this.inf = inf;
         this.timeout = timeout;
         this.currentTimeout = 0;
@@ -469,6 +489,8 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                 // decides if the current param is being manually set or not, and assigns the paramObj accordingly
                 if (tempParameters[i].indexOf(':') > -1) {
                     var halves = tempParameters[i].split(':');
+                    
+                    // check if the first section is a number, and if it is, just grab the parameter with that index
                     var paramNum = Number(halves[0]);
                     var param = isNaN(paramNum) ? com.params.find(x => x.name === halves[0]) : com.params[paramNum];
 
@@ -589,7 +611,7 @@ const commands = {
         // message.reply(makeReply(newStuff.join("\n")));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
-    ], [], true),
+    ], [], [], true),
 
     "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message: dc.Message<boolean>, parameters) {
         try {
@@ -667,7 +689,7 @@ const commands = {
         }
     }, [
         new Param("amount", `the amount you agree with this statement (capped at ${getBigData().trueEmojis.length})`, getBigData().trueEmojis.length),
-    ], [], false, 10000),
+    ], [], [], false, 10000),
 
     "false" : new Command("hidden", "<:false:1123469352826576916>", async function (message: dc.Message<boolean>, parameters) {
         let reference: dc.Message<boolean>;
@@ -715,14 +737,12 @@ const commands = {
                 }
             } break;
             case 1: {
-                if (!jermaClips) {
+                if (!jermaClips) { // this changed randomly at one point, idk why. makes things look better though
                     var tempClips = await google.youtube('v3').playlistItems.list({
-                        auth: authenticate({ key: config.ytApiKey, type: "key" }),
+                        auth: config.ytApiKey,
                         part: [ 'id', 'snippet' ], playlistId: 'PLBasdKHLpmHFYEfFCc4iCBD764SmYqDDj', maxResults: 1000,
                     });
-                    console.log("tempClips type : " + typeof tempClips)
-                    jermaClips = tempClips.data.items;
-                    console.log("jermaClips type : " + typeof jermaClips)
+                    jermaClips = tempClips.data.items
                 }
                 let index = Math.round(Math.random() * jermaClips.length - 1);
                 await message.reply(makeReply(`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`));
@@ -736,19 +756,13 @@ const commands = {
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
     ], []),
 
-    "convertTime" : new Command("hidden", "converts time", async function(message: dc.Message<boolean>, parameters) {
-        // try {
-        //     let p = parameters;
-        //     message.reply(p[""], p[""], p[""], p[""])
-        // } catch (error) {
-            
-        // }
-        message.reply(makeReply(commands["convertTime"].func.toString()))
+    "convertTime" : new Command("hidden", "converts time", async function(message: dc.Message<boolean>, p) {
+        var newTime = convertTime(p["time"], p["typeFrom"], p["typeTo"]);
+        message.reply(makeReply(`${p["time"]} ${p["typeFrom"]} is ${newTime} ${p["typeTo"]}`));
     }, [
-        new Param("timeFromValue", "", 0),
-        new Param("timeFromType", "", "s"),
-        new Param("timeToValue", "", 0),
-        new Param("timeToType", "", "s"),
+        new Param("time", "", 0),
+        new Param("typeFrom", "the time to convert from", "s"),
+        new Param("typeTo",   "the time to convert to",   "s"),
     ]),
 
     "countChannel" : new Command("patterns/counting", "sets the current channel to be the channel used for counting", async function (message: dc.Message<boolean>, parameters) {
