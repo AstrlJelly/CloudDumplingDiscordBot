@@ -1,0 +1,324 @@
+{
+	"default": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		}
+	},
+	"887502008876167209": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1077367474447716352": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1091542281242279979": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1113913617608355992": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1145223790847074345": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1145225699465101332": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1145226061051867156": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1161724415025872906": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1171209093269180529": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	},
+	"1171893658149191750": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"test12": {
+			"test21": "this is kinda deep.",
+			"test22": {
+				"test31": "this is so deep!",
+				"test32": "Wow."
+			}
+		},
+		"test11": "this isn't deep."
+	}
+}

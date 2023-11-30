@@ -20,9 +20,17 @@ const trustedUsers : string[] = [ // only add to this if you FULLY TRUST THEM
     "820357014831628309", // @12u3ie
 ];
 
+let SUPERTEST = false;
 const allTimeouts = []; // used to reinstate timeouts when the bot is restarted
 
 const PERSIST = true;
+enum PersistPaths
+{
+    server = "./persistence/servers.json",
+    user = "./persistence/users.json",
+}
+
+let optimizing = false;
 
 let bigDataTemp = null;
 
@@ -36,7 +44,7 @@ function getBigData() {
         return bigDataTemp;
 
     } else {
-        console.error("big-data doesn't exist?!!?!? fix that. now.")
+        console.error("Big-data doesn't exist...")
     }
 }
 
@@ -58,23 +66,23 @@ if (fs.existsSync("./private/ssh.key")) {
 let jermaFiles: string | any[], jermaClips: string | any[];
 let scpClient: scp.ScpClient;
 
-// dc.Message.prototype.replyTo = function (content : string, ping : boolean = false, files : string[] = []) {
-//     try {
-//         if (typeof content !== typeof String) content = content.toString();
-//         var length = content.length;
-//         if (length === 0) {
-//             content = "can't send an empty message!";
-//         } else if (length > 2000) {
-//             content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
-//         }
-//         var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
-//         if (files.length[0]) replyObj["files"] = files;
-//         return this.reply(replyObj);
-//     } catch (error) {
-//         console.error(error);
-//         return { content : "guh" };
-//     }
-// }
+function reply(message : dc.Message, content : string, ping : boolean = false, files : string[] = []) {
+    try {
+        if (typeof content !== typeof String) content = content.toString();
+        var length = content.length;
+        if (length === 0) {
+            content = "can't send an empty message!";
+        } else if (length > 2000) {
+            content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
+        }
+        var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
+        if (files.length[0]) replyObj["files"] = files;
+        return message.reply(replyObj);
+    } catch (error) {
+        console.error(error);
+        return { content : "guh" };
+    }
+}
 
 function makeReply(cont : string | number | boolean, ping = false, files = [''])  {
     try {
@@ -116,70 +124,85 @@ async function autoSave() {
 
 async function save() {
     if (!PERSIST) return;
-    fs.writeFile("./persistence/users.json", JSON.stringify({
-        _s : _s,
-        _u : _u,
-        // timeouts : allTimeouts,
-    }, null, '\t'), err => {
-        if (err) return console.error(err);
-        
-        var date = new Date();
-        var times = [ date.getHours(), date.getMinutes(), date.getSeconds() ];
-        var timeText = [];
-        for (var i = 0; i < times.length; i++) {
-            timeText.push(times[i].toString());
-            if (timeText[i].length < 2) timeText[i] = "0" + timeText[i];
-        }
-        console.info(`The file was saved! (${timeText.join(':')})`);
-    });
+    fs.writeFileSync(PersistPaths.server, JSON.stringify({ ..._s }, null, '\t'), null);
+    fs.writeFileSync(PersistPaths.user,   JSON.stringify({ ..._u }, null, '\t'), null);
+    var date = new Date();
+    var times = [ date.getHours(), date.getMinutes(), date.getSeconds() ];
+    var timeText = [];
+    for (var i = 0; i < times.length; i++) {
+        timeText.push(times[i].toString());
+        if (timeText[i].length < 2) timeText[i] = "0" + timeText[i];
+    }
+    console.info(`The file was saved! (${timeText.join(':')})`);
 }
 
 async function load() {
     if (!PERSIST) return;
-    let dataObj = {};
-    fs.readFile("./persistence/users.json", 'utf-8', async (err, data) => {
-        if (!err) {
-            try {
-                dataObj = JSON.parse(data)._s;
-                console.info("The file was loaded!");
-            } catch (error) {
-                console.error(error);
-            }
-        }
+    console.info("Start loading from JSON...");
+    let serverObj = {};
+    var before = performance.now();
+    var data = null;
+    if (fs.existsSync(PersistPaths.server)) {
+        data = fs.readFileSync(PersistPaths.server, 'utf-8');
+    }
+    if (data != null) {
+        serverObj = JSON.parse(data);
+        console.info("The file was loaded!");
 
         function defaultCheck(obj : object, objAdd : object, root : string) {
-            var keys = Object.keys(obj); // get the keys of the inputted object's default
-            for (let i = 0; i < keys.length; i++) {
-                var key = keys[i];
-                // var value = obj[key];
-                if (typeof obj[key] === 'object' && obj[key] !== null) { // if it's an object, set up the root and iterate through it
-                    var newKey = (root === "") ? (key) : (root + "/" + key)
-                    defaultCheck(obj[key], objAdd, newKey + "/")
-                } else {                                                 // otherwise just add it to the object to check it
-                    objAdd[root + key] = obj[key];
+            Object.keys(obj).forEach(key => {
+                var value = obj[key];
+                var newKey = (root === "") ? (key) : (root + "/" + key)
+                if (typeof value === 'object' && value !== null) { // if it's an object, set up the root and iterate through it
+                    defaultCheck(value, objAdd, newKey)
+                } else {                                           // otherwise just add it to the object to check it
+                    objAdd[newKey] = value;
                 }
-            }
+            });
         }
 
         var dataCheck = {};
-        defaultCheck(dataObj["default"], dataCheck, "")
-        var serverObj = {};
-        defaultCheck(_s["default"], serverObj, "")
+        var serverCheck = {};
+        defaultCheck(serverObj["default"], dataCheck, "")
+        defaultCheck(_s["default"], serverCheck, "")
 
-        console.log(JSON.stringify(dataCheck, null, "\t"));
-        console.log(JSON.stringify(serverObj, null, "\t"));
+        var check1 = Object.keys(dataCheck);
+        var check2 = Object.keys(serverCheck);
 
-        client.guilds.cache.forEach(guild => {
-            if (!dataObj.hasOwnProperty(guild.id)) { // if there's no server object
-                console.log("guild with id \"" + guild.id + "\" set to default");
-                _s[guild.id] = JSON.parse(JSON.stringify(_s["default"])); // this might be a terrible idea but it Just Works
-            } else {                                 // if there is a server object
-
-                console.log("LOADED guild with id \"" + guild.id + "\"");
-                _s[guild.id] = dataObj[guild.id];
+        var newDefaults : string[] = []
+        for (let i = 0; i < check2.length; i++) {
+            if (check1.every((key2) => key2 != check2[i])) { // if there's something new in the default
+                console.log(check2[i] + " is missing!")
+                newDefaults.push(check2[i]);
             }
-        })
-    });
+        }
+    }
+
+    client.guilds.cache.forEach(guild => {
+        if (!serverObj.hasOwnProperty(guild.id)) { // if there's no server object
+            console.log("Guild with id \"" + guild.id + "\" set to default");
+            _s[guild.id] = JSON.parse(JSON.stringify(_s["default"])); // this might be a terrible idea but it Just Works
+        } else {                                 // if there is a server object
+            console.log("LOADED guild with id \"" + guild.id + "\"");
+            _s[guild.id] = serverObj[guild.id];
+
+            // uses the newDefaults array to grab keys
+            for (let i = 0; i < newDefaults.length; i++) {
+                var keys = newDefaults[i].split('/')
+                switch (keys.length) { // dude there's gotta be a better way to do this
+                    case 1: _s[guild.id][keys[0]] = _s["default"][keys[0]];
+                        break;
+                    case 2: _s[guild.id][keys[0]][keys[1]] = _s["default"][keys[0]][keys[1]];
+                        break;
+                    case 3: _s[guild.id][keys[0]][keys[1]][keys[2]] = _s["default"][keys[0]][keys[1]][keys[2]];
+                        break;
+                    default: console.error(`${newDefaults[i]} is too deep/broken! help me!!!`)
+                        break;
+                }
+            }
+        }
+    })
+    console.log("Took " + ((performance.now() - before) / 1000) + " milliseconds to finish loading from JSON");
 }
 
 async function kill() {
@@ -221,10 +244,10 @@ class Command {
     params : Param[]
     limitedTo: string[]
     permissions: string[]
-    inf: boolean
+    inf: any
     timeout: number
     currentTimeout: number
-    constructor(genre: string, desc: string, func, params: Param[] = [], limitedTo = [], permissions = [], inf = false, timeout = 0) {
+    constructor(genre: string, desc: string, func : { (message: dc.Message<boolean>, p: any): Promise<void> }, params: Param[] = [], limitedTo = [], permissions = [], inf = null, timeout = 0) {
         this.genre = genre;
         this.desc = desc;
         this.func = func;
@@ -257,9 +280,9 @@ class Param {
 
 let _s = {
     "default" : {
-        commands : {},
+        commands : {}, // really just for timeouts for now
 
-        count : { // default counting variables
+        count : {
             channel : null,
             current: 0,      // the last number said that was correct
             prevNumber: 0,   // used to reset back to the last number if i messed up my code
@@ -267,7 +290,7 @@ let _s = {
             lastCounter: "", // used to check for duplicates
         },
         
-        chain : { // default chain variables
+        chain : {
             channel: null,
             current: "",     //
             chainLength: 0,  //
@@ -279,7 +302,16 @@ let _s = {
         convo : {
             convoChannel: null, // the channel people are speaking in
             replyChannel: null, // the channel where you reply to the people speaking
-        }
+        },
+
+        // test11 : "this isn't deep.",
+        // test12 : {
+        //     test21 : "this is kinda deep.",
+        //     test22 : {
+        //         test31 : "this is so deep!",
+        //         test32 : "Wow.",
+        //     },
+        // },
     },
 };
 let _u = {
@@ -303,7 +335,7 @@ async function resetNumber(message: dc.Message<boolean>, reply = 'empty. astrl s
 }
 
 async function chainFunc(message: dc.Message<boolean>, inRow: string | number) {
-    console.log("first " + inRow);
+    console.log("First " + inRow);
     let chain = _s[message.guildId].chain;
     if (!chain.currentChain) {
         chain.currentChain = message.content.toLowerCase();
@@ -406,7 +438,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
             message.react('✅');
             count.lastCounter = id;
             count.current++;
-            console.log("count current : " + _s[message.guildId].count.current);
+            console.log("Count current : " + _s[message.guildId].count.current);
         } else {
             resetNumber(message, (count.prevNumber < 10) ?
                 'you can do better than THAT...' :
@@ -422,7 +454,6 @@ client.on(dc.Events.MessageCreate, async (message) => {
         var replyChannel = _s[message.guildId].convo.replyChannel;
         replyChannel.send(makeReply(`${message.author.displayName}[:](${message.url})`));
     } else if (_s[message.guildId].convo.replyChannel?.id === message.channel.id) {
-        console.log(message.content);
         _s[message.guildId].convo.convoChannel.send(message.content);
     }
     // #endregion
@@ -431,7 +462,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
 async function parseCommand(message: dc.Message<boolean>, content: string, command: string, comms: object) : Promise<Command>
 {
     if (!comms.hasOwnProperty(command)) {
-        console.error("nope. no " + command + " here");
+        console.error("Nope. No " + command + " here.");
         return null;
     }
     var timeBefore = currentTime();
@@ -448,37 +479,37 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
             timeoutReply.delete();
             return com;
         }
-        //// #region parameter stuff
+        // #region parameter stuff
         var paramObj = {}; // an object with the values of parameters assigned to the name of parameters
         const space = '↭'; // will always use the same character for replacing spaces (also look at that freak. why he so wobbly)
         if (content.indexOf(' ') > -1) { // if message contains space, assume it contains parameters
             var tempParameters: string[] = [];
             
             if (content.indexOf('"') > -1) {
-                var sections = content.split('"');
-                for (var i = 0; i < sections.length; i++) { 
+                var quoteSplit = content.split('"');
+                for (var i = 0; i < quoteSplit.length; i++) { 
                     // every other section will be in double quotes, so just use modulo. also check if it actually has spaces needed to be replaced
-                    if (i % 2 === 1 && sections[i].indexOf(' ') > -1) {
-                        sections[i] = sections[i].split(' ').join(space); // most reliable way to replace all spaces with the temporary space character
+                    if (i % 2 === 1 && quoteSplit[i].indexOf(' ') > -1) {
+                        quoteSplit[i] = quoteSplit[i].split(' ').join(space); // most reliable way to replace all spaces with the temporary space character
                     }
                 }
-                tempParameters = sections.join('').split(' '); // join everything back together then split it up as parameters
+                tempParameters = quoteSplit.join('').split(' '); // join everything back together then split it up as parameters
             } else {
                 tempParameters = content.split(' ');
             }
             
             tempParameters.shift(); // remove the first element (the command) from the parameters
 
+            var i = 0; // less strict scope cuz i need to use it in the second loop
             var j = 0; // funny second iterator variable
-            console.log(com.inf);
-            for (var i = 0; i < (com.inf ? tempParameters.length : Math.min(tempParameters.length, com.params.length)); i++) {
+            while (i < com.params.length) {
                 // i've searched so much but this is the best way i can find to convert to the preset's type
                 function convParam(content: string, param: Param) : any {
                     switch (param.type) {
                         case "string" : return String(content); // just for safety :)
                         case "number" : return Number(content);
                         case "boolean": return content === "true";
-                        default: console.error("type " + param.type + " not supported! did something go wrong or do you need to add another case?"); 
+                        default: console.error("Type " + param.type + " not supported! Did something go wrong or do you need to add another case?"); 
                             break;
                     }
                 }
@@ -489,6 +520,22 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                 // decides if the current param is being manually set or not, and assigns the paramObj accordingly
                 if (tempParameters[i].indexOf(':') > -1) {
                     var halves = tempParameters[i].split(':');
+
+                    if (halves[0] == "params") { // start setting inf params if content is "params:"
+                        if (!com.inf) {
+                            reply(message, "that command doesn't support params, bee tee dubs", true);
+                        } else {
+                            // if there's not a space between the colon and the start of the inf params, replace the parameter with the inf param value
+                            if (halves.length > 1) { 
+                                tempParameters[i] = halves[1];
+                            } else {
+                                if (SUPERTEST) {
+                                    i++;
+                                }
+                            }
+                            break;
+                        }
+                    }
                     
                     // check if the first section is a number, and if it is, just grab the parameter with that index
                     var paramNum = Number(halves[0]);
@@ -502,9 +549,17 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                     paramObj[param.name] = convParam(tempParameters[i], param)
                     j++;
                 }
+                i++;
+            }
+
+            if (com.inf && (i < tempParameters.length)) {
+                while (i < tempParameters.length) {
+                    console.log(tempParameters[i]);
+                    i++;
+                }
             }
         }
-        //// #endregion
+        // #endregion
 
         // if parameter is not set, use the preset
         com.params.forEach((x: Param) => {
@@ -516,9 +571,9 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
         try {
             var comTime = currentTime();
             com.currentTimeout = (Date.now() + com.timeout);
-            console.log(`took ${comTime - timeBefore} milliseconds to complete parsing message`);
+            if (optimizing) console.log(`Took ${comTime - timeBefore} milliseconds to complete parsing message`);
             await com.func(message, paramObj);
-            console.log(`took ${currentTime() - comTime} milliseconds to finish function`);
+            if (optimizing) console.log(`Took ${currentTime() - comTime} milliseconds to finish function`);
         } catch (error) {
             console.error(error);
             await message.reply(makeReply(error, false));
@@ -611,12 +666,11 @@ const commands = {
         // message.reply(makeReply(newStuff.join("\n")));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
-    ], [], [], true),
+    ], [], [], Number),
 
     "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message: dc.Message<boolean>, parameters) {
         try {
             var time = convertTime(parameters["waitValue"], parameters["waitType"]);
-            console.log(time);
             await sleep(time);
             message.channel.send(parameters["reply"]);
             if (parameters["delete"]) message.delete();
@@ -630,7 +684,7 @@ const commands = {
         new Param("delete", "deletes message after sending", false),
     ], []),
 
-    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message: dc.Message<boolean>, parameters, del = true) {
+    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message: dc.Message<boolean>, parameters) {
         async function getMessage() {
             var messages = await message.channel.messages.fetch({ limit: 2 });
             var lastMessage = messages.last() ?? await getMessage();
@@ -659,7 +713,7 @@ const commands = {
             reference.channel.send(makeReply(mock.join('')));
         }
 
-        if (del) await message.delete();
+        await message.delete();
     }, [
         new Param("reply", "the message to mock", ""),
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
@@ -724,11 +778,10 @@ const commands = {
                     if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
 
                     let result = `./temp/${parameters["fileName"]}.mp3`;
-                    console.log(typeof jermaFiles);
                     let index = Math.round(Math.random() * jermaFiles.length - 1);
                     await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index].name}`, result);
                     await message.channel.send({ files: [result] });
-                    fs.unlink(result, ()=>{}); // lol it looks like a penis
+                    fs.unlinkSync(result);
                 } catch (error) {
                     console.error(error);
                     await reaction;
@@ -853,21 +906,35 @@ const cmdCommands = {
     "save" : new Command("bot", "saves the bot's data", async (m, p) => await save()),
     "load" : new Command("bot", "loads the bot's data", async (m, p) => await load()),
 
-    "eval" : new Command("general/fun", "runs javascript code from a string", async function (message: dc.Message<boolean>, parameters) {
+    "eval" : new Command("general/fun", "runs javascript code from a string", async function (message: dc.Message<boolean>, p) {
+        let cont = message.content;
+        let reaction : Promise<dc.MessageReaction>;
         try {
-            let code = await eval(parameters["code"])
-            if (parameters["return"] && code) {
-                message.reply(makeReply(code));
-            } else {
-                message.react('✅');
-            }
+            reaction = message.react('✅');
+            await eval(cont.substring(cont.indexOf(' '), cont.length))
         } catch (error) {
-            message.reply(makeReply(error));
+            await reaction.then(async reaction => {
+                await reaction.remove();
+                await message.react('❌');
+                await message.reply(makeReply(error));
+            })
         }
-    }, [
-        new Param("code", "the code to run", "message.reply('lol???')"),
-        new Param("return", "should the bot reply with what the code returned?", true),
-    ]),
+    }, []),
+
+    "evalReturn" : new Command("general/fun", "runs javascript code from a string", async function (message: dc.Message<boolean>, p) {
+        let cont = message.content;
+        let reaction : Promise<dc.MessageReaction>;
+        try {
+            reaction = message.react('✅');
+            await reply(message, await eval(cont.substring(cont.indexOf(' '), cont.length)));
+        } catch (error) {
+            await reaction.then(async reaction => {
+                await reaction.remove();
+                await message.react('❌');
+                await message.reply(makeReply(error));
+            })
+        }
+    }, []),
 
     "sanityCheck" : new Command("bot", "checks the parameters of each command to see if any overlap", async function(message: dc.Message<boolean>, parameters) {
         var overlaps = [];
@@ -893,7 +960,7 @@ const cmdCommands = {
 
     "resetCount" : new Command("patterns/counting", "resets the current count", async function (message: dc.Message<boolean>, parameters) {
         resetNumber(message, 'reset the count!', '✅');
-    }, [], ["438296397452935169"]),
+    }, []),
 
     "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message: dc.Message<boolean>, parameters) {
         try {
@@ -909,8 +976,6 @@ const cmdCommands = {
         new Param("message", "the message to send into the channel", "hey guys spam ping astrl in half an hour. it would be really really funny " + emojis.smide),
         new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
         new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
-    ], [
-        "438296397452935169",
     ]),
 
     "convo" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message: dc.Message<boolean>, parameters) {
@@ -927,32 +992,26 @@ const cmdCommands = {
     }, [
         new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
         new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
-    ], [
-        "438296397452935169",
     ]),
+
+    "optimizing" : new Command("bot", "turns on/off optimizing mode (sends more messages into the console)", async function (message: dc.Message<boolean>, p) {
+        optimizing = p["turnOn"] ?? !optimizing;
+        await message.react('✅');
+    }, [ new Param("turnOn", "force turn on or off. lol", null, String) ]),
 
     "restart" : new Command("bot", "restarts the bot", async function (message: dc.Message<boolean>, parameters) {
         await message.channel.send('bot is restarting');
         await save();
         await client.destroy();
-    }, [],
-    [
-        "438296397452935169",
-        "705120334705197076",
-        "686222324860715014",
-    ]),
+    }, []),
 
     "kill" : new Command("bot", "kills the bot", async function (message: dc.Message<boolean>, parameters) {
         await message.channel.send('bot is now dead 😢');
         await kill();
-    }, [],
-    [
-        "438296397452935169",
-        "705120334705197076",
-        "686222324860715014",
-    ]),
+    }, []),
 
     "didAnythingBreak?" : new Command("bot", "just testing every command until something breaks", async function (message: dc.Message<boolean>, parameters) {
+        // this is silly and doesn't really work lol
         var keys = Object.keys(commands);
         for (let i = 0; i < keys.length; i++) {
             await message.reply(makeReply("testing command " + keys[i]))
@@ -964,17 +1023,15 @@ const cmdCommands = {
         message.reply(makeReply("finished!"));
     }, [], []),
 
-    "test" : new Command("bot", "various things astrl will put in here to test node.js", async function (message: dc.Message<boolean>, p) {
-        // var reply = listCommands(commands, false, "", p["lol"]);
-        // message.reply(makeReply(reply));
+    "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (message: dc.Message<boolean>, p) {
+        var test = (message as unknown) as dc.RepliableInteraction;
+        test.reply({
+            content : "if this works it is very good",
+            ephemeral : true,
+        });
     }, [
-        new Param("lol", "just for math class", 0)
-    ],
-    [
-        "438296397452935169",
-        "705120334705197076",
-        "686222324860715014",
-    ]),
+        new Param("lol", "use this for anything", "")
+    ], [], [], Number),
 }
 // Log in to Discord with your client's token
 client.login(config.token);
