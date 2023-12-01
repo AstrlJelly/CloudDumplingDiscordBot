@@ -20,7 +20,7 @@ const trustedUsers : string[] = [ // only add to this if you FULLY TRUST THEM
     "820357014831628309", // @12u3ie
 ];
 
-let SUPERTEST = false;
+var temprorary = false;
 const allTimeouts = []; // used to reinstate timeouts when the bot is restarted
 
 const PERSIST = true;
@@ -34,7 +34,7 @@ let optimizing = false;
 
 let bigDataTemp = null;
 
-// exists because i don't want so much data in memory, but 
+// exists because i don't want so much data in memory, but i need to use big-data multiple times in a row
 function getBigData() {
     if (fs.existsSync("./big-data.json")) {
         if (!bigDataTemp) {
@@ -42,7 +42,6 @@ function getBigData() {
             wipeBigData();
         }
         return bigDataTemp;
-
     } else {
         console.error("Big-data doesn't exist...")
     }
@@ -66,21 +65,33 @@ if (fs.existsSync("./private/ssh.key")) {
 let jermaFiles: string | any[], jermaClips: string | any[];
 let scpClient: scp.ScpClient;
 
-function reply(message : dc.Message, content : string, ping : boolean = false, files : string[] = []) {
+function replyTo(message : dc.Message, content : string, ping : boolean = false, files : string[] = []) : Promise<dc.Message> {
     try {
-        if (typeof content !== typeof String) content = content.toString();
-        var length = content.length;
-        if (length === 0) {
-            content = "can't send an empty message!";
-        } else if (length > 2000) {
-            content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
-        }
-        var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
-        if (files.length[0]) replyObj["files"] = files;
-        return message.reply(replyObj);
+        return message.reply(makeReply(content, ping));
     } catch (error) {
         console.error(error);
-        return { content : "guh" };
+        return message.reply("replyTo() broke!!");
+    }
+}
+
+function sendTo(target : dc.Message | dc.TextChannel, content : string, files : string[] = []) : Promise<dc.Message> {
+    var channel : dc.TextBasedChannel;
+    // if target is message, convert to channel, else keep channel
+    switch (typeof target) { // i HATE switch cases
+        case typeof dc.Message: 
+            channel = (target as dc.Message).channel; break;
+        case typeof dc.TextChannel:
+            channel = target as dc.TextChannel; break;
+        default:
+            console.error("sendTo() failed, you must've put something weird into the target parameter");
+            return;
+    }
+    try {
+        console.log(typeof channel);
+        return channel.send(makeReply(content, true, files));
+    } catch (error) {
+        console.error(error);
+        return channel.send("sendTo() broke!!");
     }
 }
 
@@ -91,7 +102,7 @@ function makeReply(cont : string | number | boolean, ping = false, files = [''])
         if (length === 0) {
             content = "can't send an empty message!";
         } else if (length > 2000) {
-            // content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
+            content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
         }
         var replyObj = { content: content, allowedMentions: { repliedUser: ping } };
         if (files.length[0]) replyObj["files"] = files;
@@ -102,14 +113,12 @@ function makeReply(cont : string | number | boolean, ping = false, files = [''])
     }
 }
 
-// this function had a "name" parameter but i have no clue what it was supposed to do 
 async function sleep(ms : number, push : boolean = true) : Promise<void> {
     var t = new Promise<void>((resolve) => {
         setTimeout(resolve, ms);
         if (push) allTimeouts.push({ 
             timeout : t,
             startTime : Date.now(),
-            // name : name,
         });
     });
     return t;
@@ -331,7 +340,7 @@ async function resetNumber(message: dc.Message<boolean>, reply = 'empty. astrl s
     count.prevNumber = count.currentNum;
     count.currentNum = 0;
     await message.react(react);
-    await message.reply(makeReply(reply));
+    await replyTo(message, reply);
 }
 
 async function chainFunc(message: dc.Message<boolean>, inRow: string | number) {
@@ -382,7 +391,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
         if (((userData.silly === 0 && mathjs.random()) || userData.silly > 0)) {
             switch (userData.silly) {
                 case 0:
-                    await message.reply("huh? speak up next time buddy.");
+                    await replyTo(message, "huh? speak up next time buddy.");
                     userData.silly++;
                     return;
                 case 1:
@@ -395,7 +404,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
                             "*ALL*. *UPPERCASE*. OR ELSE I *CAN'T* HEAR YOU",
                             "",
                         ]
-                        await message.reply(replies[mathjs.randomInt(0, replies.length)]);
+                        await replyTo(message, replies[mathjs.randomInt(0, replies.length)]);
                     }
                     return;
                 default:
@@ -474,7 +483,7 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
         if (com.currentTimeout > dateNow) { // handle command timeout if needed, will send a message to tell the commander there's a timeout then delete once the command is ready, or in 5 seconds
             var timeToWait = com.currentTimeout - dateNow;
             var timeToWaitReply = timeToWait < 1000 ? timeToWait + " milliseconds" : mathjs.round(timeToWait / 1000) + " seconds";
-            var timeoutReply = await message.reply(makeReply("gotta wait " + timeToWaitReply + ". lol."));
+            var timeoutReply = await replyTo(message, "gotta wait " + timeToWaitReply + ". lol.");
             await sleep(mathjs.min(timeToWait, convertTime(5, 's', 'ms'))); // hurrah for convertTime()
             timeoutReply.delete();
             return com;
@@ -523,13 +532,13 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
 
                     if (halves[0] == "params") { // start setting inf params if content is "params:"
                         if (!com.inf) {
-                            reply(message, "that command doesn't support params, bee tee dubs", true);
+                            replyTo(message, "that command doesn't support params, bee tee dubs", true);
                         } else {
                             // if there's not a space between the colon and the start of the inf params, replace the parameter with the inf param value
                             if (halves.length > 1) { 
                                 tempParameters[i] = halves[1];
                             } else {
-                                if (SUPERTEST) {
+                                if (temprorary) {
                                     i++;
                                 }
                             }
@@ -576,10 +585,10 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
             if (optimizing) console.log(`Took ${currentTime() - comTime} milliseconds to finish function`);
         } catch (error) {
             console.error(error);
-            await message.reply(makeReply(error, false));
+            await replyTo(message, error, false);
         }
     } else {
-        await message.reply(makeReply('hey, you can\'t use this command!'));
+        await replyTo(message, 'hey, you can\'t use this command!');
     }
     return com;
 }
@@ -616,7 +625,7 @@ const commandData = {};
 const commands = {
     "help" : new Command("bot/support", "lists all commands", async function (message: dc.Message<boolean>, p) {
         var reply = listCommands(commands, p["paramDescs"], p["whichCommand"]);
-        await message.reply(makeReply(reply));
+        await replyTo(message, reply);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
@@ -624,9 +633,9 @@ const commands = {
 
     "math" : new Command("general/fun", "does the math put in front of it", async function (message: dc.Message<boolean>, parameters) {
         try {
-            message.reply(makeReply(String(mathjs.evaluate(parameters["equation"]))));
+            replyTo(message, mathjs.evaluate(parameters["equation"]));
         } catch (error) {
-            message.reply(makeReply(error));
+            replyTo(message, error);
         }
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
@@ -647,7 +656,7 @@ const commands = {
             newStuff.push(String ((4/3) * Math.PI * (Math.pow(modRad, 3))));
         }
 
-        message.reply(makeReply(newStuff.join("\n")));
+        replyTo(message, newStuff.join("\n"));
         // uses params, not implemented yet. IMPORTANT ---------------------------------------------------------------------
         // var nums = parameters["params"].split(' ');
         // var feet = [];
@@ -663,7 +672,7 @@ const commands = {
         //     newStuff.push(String ((4/3) * Math.PI * (Math.pow(modRad, 3))));
         // }
 
-        // message.reply(makeReply(newStuff.join("\n")));
+        // reply(message, (newStuff.join("\n")));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
     ], [], [], Number),
@@ -708,7 +717,7 @@ const commands = {
             mock.push(vary ? toMock[i].toLowerCase() : toMock[i].toUpperCase());
         }
         if (parameters["reply"] === "") {
-            reference.reply(makeReply(mock.join('')));
+            replyTo(reference, mock.join(''));
         } else {
             reference.channel.send(makeReply(mock.join('')));
         }
@@ -798,10 +807,10 @@ const commands = {
                     jermaClips = tempClips.data.items
                 }
                 let index = Math.round(Math.random() * jermaClips.length - 1);
-                await message.reply(makeReply(`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`));
+                await replyTo(message, (`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`));
             } break;
             default:
-                await message.reply(makeReply(`type "${parameters["fileType"]}" not supported!`));
+                await replyTo(message, (`type "${parameters["fileType"]}" not supported!`));
                 break;
         }
     }, [
@@ -811,7 +820,7 @@ const commands = {
 
     "convertTime" : new Command("hidden", "converts time", async function(message: dc.Message<boolean>, p) {
         var newTime = convertTime(p["time"], p["typeFrom"], p["typeTo"]);
-        message.reply(makeReply(`${p["time"]} ${p["typeFrom"]} is ${newTime} ${p["typeTo"]}`));
+        replyTo(message, (`${p["time"]} ${p["typeFrom"]} is ${newTime} ${p["typeTo"]}`));
     }, [
         new Param("time", "", 0),
         new Param("typeFrom", "the time to convert from", "s"),
@@ -873,7 +882,7 @@ const commands = {
         _s[message.guildId].chain.channel = isChannel ? "" : channelId;
         await client.channels.fetch(channelId)
             .then(x => (x as dc.TextChannel).send(isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.'))
-            .catch(err => message.reply(makeReply(err)));
+            .catch(err => replyTo(message, err));
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [ "438296397452935169" ]),
@@ -881,7 +890,7 @@ const commands = {
     "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (message: dc.Message<boolean>, parameters) {
         _s[message.guildId].chain.autoChain = parameters["howMany"];
         console.log(_s[message.guildId].chain.autoChain);
-        message.reply(makeReply(`autoChain is now ${_s[message.guildId].chain.autoChain}.`));
+        replyTo(message, (`autoChain is now ${_s[message.guildId].chain.autoChain}.`));
     }, [
         new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)
     ], [ "438296397452935169" ]),
@@ -896,7 +905,7 @@ const commands = {
 const cmdCommands = {
     "help" : new Command("bot/support", "lists all cmd commands", async function (message: dc.Message<boolean>, p) {
         var reply = listCommands(cmdCommands, p["paramDescs"], p["whichCommand"]);
-        await message.reply(makeReply(reply));
+        await replyTo(message, (reply));
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
@@ -911,12 +920,13 @@ const cmdCommands = {
         let reaction : Promise<dc.MessageReaction>;
         try {
             reaction = message.react('✅');
-            await eval(cont.substring(cont.indexOf(' '), cont.length))
+            var code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
+            console.log(await new Function('message', code)(message));
         } catch (error) {
             await reaction.then(async reaction => {
                 await reaction.remove();
                 await message.react('❌');
-                await message.reply(makeReply(error));
+                await replyTo(message, (error));
             })
         }
     }, []),
@@ -926,12 +936,14 @@ const cmdCommands = {
         let reaction : Promise<dc.MessageReaction>;
         try {
             reaction = message.react('✅');
-            await reply(message, await eval(cont.substring(cont.indexOf(' '), cont.length)));
+            var code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
+            var codeReturn = await new Function('message', code)(message);
+            await replyTo(message, codeReturn)
         } catch (error) {
             await reaction.then(async reaction => {
                 await reaction.remove();
                 await message.react('❌');
-                await message.reply(makeReply(error));
+                await replyTo(message, (error));
             })
         }
     }, []),
@@ -952,7 +964,7 @@ const cmdCommands = {
         var reply = overlaps.length > 0 ?
             "overlaps:\n" + overlaps.join('\n') +"\nastrl u dumbass" : 
             "no overlaps here! wow isn't astrl such a good programmer" + emojis.smide;
-        await message.reply(makeReply(reply));
+        await replyTo(message, (reply));
     }, [
         // new Param("doubleUp", "desription on", 52),
         // new Param("doubleUp", "descirtpn dos", "this is a default"),
@@ -970,7 +982,7 @@ const cmdCommands = {
                 await channel?.send(makeReply(parameters["message"]));
             }
         } catch (error) {
-            await message.reply(makeReply("dumbass\n"+error))
+            await replyTo(message, "dumbass\n"+error)
         }
     }, [
         new Param("message", "the message to send into the channel", "hey guys spam ping astrl in half an hour. it would be really really funny " + emojis.smide),
@@ -987,7 +999,7 @@ const cmdCommands = {
                 _s[message.guildId].convo.replyChannel = message.channel
             }
         } catch (error) {
-            await message.reply(makeReply("dumbass\n"+error))
+            await replyTo(message, "dumbass\n"+error)
         }
     }, [
         new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
@@ -1006,7 +1018,7 @@ const cmdCommands = {
     }, []),
 
     "kill" : new Command("bot", "kills the bot", async function (message: dc.Message<boolean>, parameters) {
-        await message.channel.send('bot is now dead 😢');
+        await sendTo(message, 'bot is now dead 😢');
         await kill();
     }, []),
 
@@ -1014,13 +1026,13 @@ const cmdCommands = {
         // this is silly and doesn't really work lol
         var keys = Object.keys(commands);
         for (let i = 0; i < keys.length; i++) {
-            await message.reply(makeReply("testing command " + keys[i]))
+            await replyTo(message, ("testing command " + keys[i]))
             await sleep(1000);
             await parseCommand(message, (config.prefix + keys[i]), keys[i], commands);
             await sleep(1000);
         }
 
-        message.reply(makeReply("finished!"));
+        replyTo(message, "finished!");
     }, [], []),
 
     "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (message: dc.Message<boolean>, p) {
