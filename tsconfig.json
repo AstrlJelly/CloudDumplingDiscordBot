@@ -2,17 +2,21 @@
     "compilerOptions": {
         "target": "esnext",
         "module": "nodenext",
-        "resolveJsonModule": true,
     },
     "files": [
         "./index.ts",
         "./commands.ts",
     ],
-    "resolveJsonModule" : true,
     "exclude": ["node_modules"],
     "editor.codeActionsOnSave": {
         "source.organizeImports": true
     },
     "editor.showUnused": true,
-    "editor.autoImportSuggestions.enabled": true
+    "editor.autoImportSuggestions.enabled": true,
+    "strictNullChecks" : false,
+    "rules": {
+      "semi": "off",
+      "@typescript-eslint/semi": ["error"],
+    },
+	"parser": "@typescript-eslint/parser",
 }

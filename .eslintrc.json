@@ -1,5 +1,5 @@
 {
-	"extends": "eslint:recommended",
+	// "extends": "eslint:recommended",
 	"env": {
 		"node": true,
 		"es6": true
@@ -9,5 +9,6 @@
 	},
 	"rules": {
 		"semi": ["error", "always"],
+		"prefer-const": true
 	}
 }
