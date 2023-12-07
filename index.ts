@@ -22,8 +22,6 @@ const trustedUsers : string[] = [ // only add to this if you FULLY TRUST THEM
     "820357014831628309", // @12u3ie
 ];
 
-const allTimeouts : object[] = []; // used to reinstate timeouts when the bot is restarted
-
 const PERSIST = true;
 enum PersistPaths
 {
@@ -40,6 +38,12 @@ enum Time
     hour,
     day,
     week,
+}
+
+function findTime(time : string) : number {
+    let times = [ 'ms', 's', 'm', 'h', 'd', 'w' ];
+    let newTime = times.indexOf(time);
+    return (newTime);
 }
 
 let debugMode = false;
@@ -77,26 +81,20 @@ let jermaFiles: string[], jermaClips: any[];
 let scpClient: scp.ScpClient;
 
 function sendTo(target : dc.Message | dc.TextBasedChannel, content : string, ping : boolean = false, files : string[] = []) : Promise<dc.Message> | undefined {
-    content = content.toString();
-    const isChannel = typeof target === typeof dc.TextChannel;
+    content = String(content);
     const length = content.length;
     if (length === 0 && files?.length == 0) {
         content = "can't send an empty message!";
     } else if (length > 2000) {
         content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
     }
-    const replyObj = { content: content, allowedMentions: { repliedUser: (!isChannel && ping) } };
+    const replyObj = { content: content, allowedMentions: { repliedUser: (ping) } };
     if (files.length[0]) replyObj["files"] = files;
     
-    console.log("typeof target : " + typeof target);
-    if (isChannel) {
-        return (target as dc.TextChannel).send(replyObj);
-    } else {
+    if ((target as dc.Message).reply !== undefined) {
         return (target as dc.Message).reply(replyObj);
-    }
-    try {
-    } catch (error) {
-        console.error("replyTo() broke!! error : " + error);
+    } else if ((target as dc.TextChannel).send !== undefined) {
+        return (target as dc.TextChannel).send(replyObj);
     }
 }
 
@@ -111,16 +109,19 @@ function debugLog(content : any) {
     }
 }
 
-async function sleepPush(time : number, convert : Time = Time.millisecond) : Promise<void> {
-    allTimeouts.push({ 
-        timeout : sleep(time, convert), // just calling the sleep function here saves a lot of repeated code
-        startTime : Date.now(),
-    });
-    return allTimeouts[allTimeouts.length - 1]["timeout"]; // is this silly? probably. does it work? also probably.
-}
+// might be just a terrible bandaid solution for something i should handle in special occasions
+// doesn't really work rn anyways lol. doesn't have the info to pick up on the functions needed
+// async function sleepPush(time : number, convert : Time = Time.millisecond) : Promise<void> {
+//     allTimeouts.push({ 
+//         timeout : convert,
+//         startTime : Date.now(),
+//     });
+//     return sleep(time, convert);
+// }
 
 async function sleep(time : number, convert : Time = Time.millisecond) : Promise<void> {
-    if (convert !== Time.second) time = convertTime(time, convert, Time.millisecond) // always wanna keep it milliseconds
+    if (convert !== Time.millisecond) time = convertTime(time, convert, Time.millisecond) // always wanna keep it milliseconds
+    debugLog("sleep for " + time + " milliseconds")
     return new Promise<void>((resolve) => setTimeout(resolve, time));
 }
 
@@ -135,7 +136,7 @@ async function save() {
     if (!PERSIST) return;
     fs.writeFileSync(PersistPaths.server,  JSON.stringify({ ..._s }, null, '\t'), null);
     fs.writeFileSync(PersistPaths.user,    JSON.stringify({ ..._u }, null, '\t'), null);
-    fs.writeFileSync(PersistPaths.persist, JSON.stringify({ 0: allTimeouts }, null, '\t'), null);
+    // fs.writeFileSync(PersistPaths.persist, JSON.stringify({ 0: allTimeouts }, null, '\t'), null);
     const date = new Date();
     const times : number[] = [ date.getHours(), date.getMinutes(), date.getSeconds() ];
     const timeText : string[] = [];
@@ -256,25 +257,39 @@ function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Ti
     return (typeFrom > typeTo) ? (time * modifier) : (time / modifier);
 }
 
+function enumKeys(enumToParse : object) {
+
+}
+
 class Command {
     genre : string
     desc: string
-    func : { (message: dc.Message<boolean>, p: any): Promise<void> };
+    func : { (message: dc.Message<boolean>, p: object): Promise<void> };
     params : Param[]
+    inf : Param // inf param, undefined if it isn't defined in params
     limitedTo: string[][] // first array is user ids, second is permissions
     timeout: number
     currentTimeout: number
-    constructor(genre: string, desc: string, func : { (message: dc.Message<boolean>, p: any): Promise<void> }, params: Param[] = [], limitedTo : string[][] = [[],[],[]], timeout = 0) {
+    constructor(genre: string, desc: string, func : { (message: dc.Message<boolean>, p: object): Promise<void> }, params: Param[] = [], limitedTo : string[][] = [null,null,null], timeout = 0) {
+        // checking for length is kinda lame so just make it null if it doesn't exist or if it's an empty array
         for (let i = 0; i < 2; i++) {
-            if (!limitedTo[i]) limitedTo[i] = null;
+            if (limitedTo[i]?.length) limitedTo[i] = null;
         }
         this.genre = genre;
         this.desc = desc;
         this.func = func;
-        this.params = params;
         this.limitedTo = limitedTo;
         this.timeout = timeout;
         this.currentTimeout = 0;
+
+        // handle infParam stuff
+        this.inf = params.find(x => x.name === "params");
+        if (this.inf !== undefined) {
+            let index = params.indexOf(this.inf); 
+            this.params = params.splice(index, index); // removes just the inf params parameter
+        } else {
+            this.params = params;
+        }
     }
 }
 
@@ -379,12 +394,12 @@ client.once(dc.Events.ClientReady, async c => {
     autoSave();
 });
 
-client.on(dc.Events.MessageCreate, async (message) => {
+client.on(dc.Events.MessageCreate, async (msg) => {
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
-    if (message.author.bot) return;
+    if (msg.author.bot) return;
 
-    const commandFromMessage = message.content.split(' ')[0].substring(config.prefix.length);
-    const id = message.author.id;
+    const commandFromMessage = msg.content.split(' ')[0].substring(config.prefix.length);
+    const id = msg.author.id;
 
     if (!_u.hasOwnProperty(id)) {
         _u[id] = JSON.parse(JSON.stringify(_u["default"]));
@@ -393,16 +408,16 @@ client.on(dc.Events.MessageCreate, async (message) => {
     const userData = _u[id];
 
     // #region command handler
-    if (message.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
+    if (msg.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
         // 5% chance to happen, if this person is in sillyObj
         if (((userData.silly === 0 && mathjs.random()) || userData.silly > 0)) {
             switch (userData.silly) {
                 case 0:
-                    await sendTo(message, "huh? speak up next time buddy.");
+                    await sendTo(msg, "huh? speak up next time buddy.");
                     userData.silly++;
                     return;
                 case 1:
-                    if (message.content === message.content.toUpperCase()) {
+                    if (msg.content === msg.content.toUpperCase()) {
                         userData.silly = 0;
                     } else {
                         const replies : string[] = [
@@ -411,7 +426,7 @@ client.on(dc.Events.MessageCreate, async (message) => {
                             "*ALL*. *UPPERCASE*. OR ELSE I *CAN'T* HEAR YOU",
                             "",
                         ]
-                        await sendTo(message, replies[_.random(0, replies.length - 1)]);
+                        await sendTo(msg, replies[_.random(0, replies.length - 1)]);
                     }
                     return;
                 default:
@@ -419,17 +434,17 @@ client.on(dc.Events.MessageCreate, async (message) => {
                     break;
             }
         }
-        await parseCommand(message, message.content, commandFromMessage, commands);
+        await parseCommand(msg, msg.content, commandFromMessage, commands);
         return;
     }
     // #endregion
 
     // #region counting and chain handler
-    const count = get_s(message).count;
+    const count = get_s(msg).count;
 
-    if (message.channel.id === count.channel?.id) {
+    if (msg.channel.id === count.channel?.id) {
         let num = 0;
-        const content = String(wordsToNumbers(message.content));
+        const content = String(wordsToNumbers(msg.content));
 
         try {
             num = mathjs.evaluate(content);
@@ -446,56 +461,61 @@ client.on(dc.Events.MessageCreate, async (message) => {
         }
         
         if (count.lastCounter === id) {
-            resetNumber(message, 'uhhh... you know you can\'t count twice in a row, right??');
+            resetNumber(msg, 'uhhh... you know you can\'t count twice in a row, right??');
             return;
         }
 
         if (num === count.current + 1) {
-            message.react('✅');
+            msg.react('✅');
             count.lastCounter = id;
             count.current++;
-            debugLog("Count current : " + get_s(message).count.current);
+            debugLog("Count current : " + get_s(msg).count.current);
         } else {
-            resetNumber(message, (count.prevNumber < 10) ?
+            resetNumber(msg, (count.prevNumber < 10) ?
                 'you can do better than THAT...' :
                 'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
             );
         }
-    } else if (message.channel.id === get_s(message).chain.channel) {
-        await chainFunc(message, 3);
-    } else if (get_s(message).chain.autoChain >= 0) {
+    } else if (msg.channel.id === get_s(msg).chain.channel) {
+        await chainFunc(msg, 3);
+    } else if (get_s(msg).chain.autoChain >= 0) {
         //chainFunc(message, chain.autoChain);
     }
-    if (get_s(message).convo.convoChannel?.id === message.channel.id) {
-        const replyChannel = get_s(message).convo.replyChannel;
-        await sendTo(replyChannel, `${message.author.displayName}[:](${message.url})`);
-    } else if (get_s(message).convo.replyChannel?.id === message.channel.id) {
-        await sendTo(get_s(message).convo.convoChannel, message.content);
+    if (get_s(msg).convo.convoChannel?.id === msg.channel.id) {
+        const replyChannel = get_s(msg).convo.replyChannel;
+        await sendTo(replyChannel, `${msg.author.displayName}[:](${msg.url})`);
+    } else if (get_s(msg).convo.replyChannel?.id === msg.channel.id) {
+        await sendTo(get_s(msg).convo.convoChannel, msg.content);
     }
     // #endregion
 });
 
-async function parseCommand(message: dc.Message<boolean>, content: string, command: string, comms: object) : Promise<Command>
+async function parseCommand(msg: dc.Message<boolean>, content: string, command: string, comms: object) : Promise<Command>
 {
     if (!comms.hasOwnProperty(command)) {
         console.error("Nope. No " + command + " here.");
         return null;
     }
-    const timeBefore = currentTime();
+    const timeBefore : number = currentTime();
     const com : Command = comms[command];
-    const permissions : string[] = message.member.permissions.toArray();
+    const permissions : string[] = msg.member.permissions.toArray();
 
-    const myArray = [];
-    const demo = myArray.length > 0 ? myArray.includes("variable goes here") : true
+    const trusted : boolean = trustedUsers.includes(msg.author.id);
+    const notLimited : boolean = com.limitedTo[0] == null || com.limitedTo[0]?.includes(msg.author.id);
+    const hasPerms : boolean = (_.intersection(com.limitedTo[1], permissions)).length > 0;
+
+    console.log("trusted : " + trusted);
+    console.log("notLimited : " + notLimited);
+    console.log("hasPerms : " + hasPerms);
 
     // if not limited to anybody, if limited to the message author/their permissions, or if user is fully trusted
-    if (trustedUsers.includes(message.author.id) || com.limitedTo[0]?.includes(message.author.id) || !com.limitedTo[1]?.every(x => permissions.includes(x))) {
+    if (trusted || notLimited || hasPerms) {
         const dateNow = Date.now(); // actually really good for global time so that i don't need to persist it
         if (com.currentTimeout > dateNow) { // handle command timeout if needed, will send a message to tell the commander there's a timeout then delete once the command is ready, or in 5 seconds
             const timeToWait = com.currentTimeout - dateNow;
             const timeToWaitReply = timeToWait < 1000 ? timeToWait + " milliseconds" : mathjs.round(timeToWait / 1000) + " seconds";
-            const timeoutReply = await sendTo(message, "gotta wait " + timeToWaitReply + ". lol.");
-            await sleepPush(mathjs.min(timeToWait, convertTime(5, Time.second, Time.millisecond))); // hurrah for convertTime()
+            const timeoutReply = await sendTo(msg, "gotta wait " + timeToWaitReply + ". lol.");
+            await sleep(mathjs.min(timeToWait, convertTime(5, Time.second, Time.millisecond))); // hurrah for convertTime()
             timeoutReply.delete();
             return com;
         }
@@ -508,8 +528,7 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
             if (content.indexOf('"') > -1) {
                 const quoteSplit = content.split('"');
                 for (let i = 0; i < quoteSplit.length; i++) { 
-                    // every other section will be in double quotes, so just use modulo. 
-                    // also check if it actually has spaces needed to be replaced
+                    // check every other section (they will always be in double quotes) and check if it actually has spaces needed to be replaced
                     if (i % 2 === 1 && quoteSplit[i].indexOf(' ') > -1) {
                         quoteSplit[i] = quoteSplit[i].split(' ').join(space); // most reliable way to replace all spaces with the temporary space character
                     }
@@ -530,8 +549,7 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                         break;
                 }
             }
-
-            const inf = (com.params[com.params.length - 1]?.name === "params"); // inf params parameter should always be the last one
+ 
             let i = 0; // less strict scope cuz i need to use it in the second loop
             let j = 0; // funny second iterator variable
             while (i < mathjs.min(com.params.length, tempParameters.length)) {
@@ -545,8 +563,8 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                     const halves = tempParameters[i].split(':');
 
                     if (halves[0] === "params") { // start setting inf params if content is "params:"
-                        if (!inf) {
-                            await sendTo(message, "that command doesn't support params, bee tee dubs", true);
+                        if (!com.inf) {
+                            await sendTo(msg, "that command doesn't support params, bee tee dubs", true);
                         } else {
                             // if there's not a space between the colon and the start of the inf params, replace the parameter with the inf param value
                             if (halves.length > 1) { 
@@ -573,8 +591,10 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
                 i++;
             }
 
-            if (inf && (i < tempParameters.length)) {
+            if (com.inf && (i < tempParameters.length)) {
                 while (i < tempParameters.length) {
+                    console.log("paramObj.params : " + paramObj.params);
+                    console.log("typeof paramObj.params : " + typeof paramObj.params);
                     paramObj.params.push(convParam(tempParameters[i], typeof (com.params["params"])));
                     debugLog(`param ${tempParameters[i]}`);
                     i++;
@@ -594,14 +614,14 @@ async function parseCommand(message: dc.Message<boolean>, content: string, comma
             const comTime = currentTime();
             com.currentTimeout = (Date.now() + com.timeout);
             debugLog(`Took ${comTime - timeBefore} milliseconds to complete parsing message`);
-            await com.func(message, paramObj);
+            await com.func(msg, paramObj);
             debugLog(`Took ${currentTime() - comTime} milliseconds to finish function`);
         } catch (error) {
             console.error(error);
-            await sendTo(message, error, false);
+            await sendTo(msg, error, false);
         }
     } else {
-        await sendTo(message, 'hey, you can\'t use this command!');
+        await sendTo(msg, 'hey, you can\'t use this command!');
     }
     return com;
 }
@@ -636,22 +656,22 @@ const genres = {};
 // it isn't persistent, so data like the help command will get regenerated (good for if a new command is added/modified)
 const commandData = {};
 const commands = {
-    "help" : new Command("bot/support", "lists all commands", async function (message: dc.Message<boolean>, p) {
+    "help" : new Command("bot/support", "lists all commands", async function (msg: dc.Message<boolean>, p) {
         const reply = listCommands(commands, p["paramDescs"], p["whichCommand"]);
-        await sendTo(message, reply);
+        await sendTo(msg, reply);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
     ]),
 
     // #region novelty
-    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (message: dc.Message<boolean>, p) {
+    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (msg: dc.Message<boolean>, p) {
         try {
-            await sleepPush(p["waitValue"], p["waitType"]);
-            await sendTo(message.channel, p["reply"]);
-            if (p["delete"]) message.delete();
+            await sleep(p["waitValue"], findTime(p["waitType"]));
+            await sendTo(msg.channel, p["reply"]);
+            if (p["delete"]) msg.delete();
         } catch (error) {
-            await sendTo(message.channel, error);
+            await sendTo(msg.channel, error);
         }
     }, [
         new Param("reply", "the message to echo back to you", "..."),
@@ -660,17 +680,17 @@ const commands = {
         new Param("delete", "deletes message after sending", false),
     ]),
 
-    "math" : new Command("general/fun", "does the math put in front of it", async function (message: dc.Message<boolean>, p) {
+    "math" : new Command("general/fun", "does the math put in front of it", async function (msg: dc.Message<boolean>, p) {
         try {
-            await sendTo(message, mathjs.evaluate(p["equation"]));
+            await sendTo(msg, mathjs.evaluate(p["equation"]));
         } catch (error) {
-            await sendTo(message, error);
+            await sendTo(msg, error);
         }
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
     ]),
 
-    "mathClass" : new Command("general/fun", "this is for school lol", async function (message: dc.Message<boolean>, p) {
+    "mathClass" : new Command("general/fun", "this is for school lol", async function (msg: dc.Message<boolean>, p) {
         const feet = [];
         const inches = [];
         for (let i = 0; i < p["params"].length; i++) {
@@ -682,22 +702,22 @@ const commands = {
             debugLog(modRad);
         }
 
-        await sendTo(message, newStuff.join("\n"));
+        await sendTo(msg, newStuff.join("\n"));
     }, [
         new Param("equation", "the equation to be evaluated", "undefined"),
         new Param("params", "the numbers to use in the math", "undefined"),
     ]),
 
-    "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (message: dc.Message<boolean>, p) {
+    "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (msg: dc.Message<boolean>, p) {
         switch (p["fileType"]) {
             case 0: {
-                await sendTo(message, "jerma 0 not working rn!! try again later. or just do \"$jerma 1\", that works");
+                await sendTo(msg, "jerma 0 not working rn!! try again later. or just do \"$jerma 1\", that works");
                 return;
                 if (os.hostname() !== "hero-corp") {
-                    await sendTo(message, "sorry, jerma 0 only works on astrl's main pc. im being hosting from somewhere else rn")
+                    await sendTo(msg, "sorry, jerma 0 only works on astrl's main pc. im being hosting from somewhere else rn")
                     return;
                 }
-                const reaction = message.react('✅');
+                const reaction = msg.react('✅');
                 try {
                     if (!scpClient) scpClient = await scp.Client(remote_server);
                     debugLog(await scpClient.list('/home/opc/mediaHosting/jermaSFX/'));
@@ -706,13 +726,13 @@ const commands = {
                     const result = `./temp/${p["fileName"]}.mp3`;
                     const index = Math.round(Math.random() * jermaFiles.length - 1);
                     await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index]}`, result);
-                    await sendTo(message.channel, "", true, [result]);
+                    await sendTo(msg.channel, "", true, [result]);
                     fs.unlinkSync(result);
                 } catch (error) {
                     console.error(error);
                     await reaction;
-                    await message.reactions.removeAll().catch(error => console.error('Failed to remove reactions:\n', error));
-                    await message.react('❌');
+                    await msg.reactions.removeAll().catch(error => console.error('Failed to remove reactions:\n', error));
+                    await msg.react('❌');
                 }
             } break;
             case 1: {
@@ -724,10 +744,10 @@ const commands = {
                     jermaClips = tempClips.data.items
                 }
                 const index = Math.round(Math.random() * jermaClips.length - 1);
-                await sendTo(message, (`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`));
+                await sendTo(msg, (`[${jermaClips[index].snippet.title}](https://www.youtube.com/watch?v=${jermaClips[index].snippet.resourceId.videoId})`));
             } break;
             default:
-                await sendTo(message, (`type "${p["fileType"]}" not supported!`));
+                await sendTo(msg, (`type "${p["fileType"]}" not supported!`));
                 break;
         }
     }, [
@@ -735,9 +755,9 @@ const commands = {
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
     ]),
 
-    "convertTime" : new Command("hidden", "converts time", async function(message: dc.Message<boolean>, p) {
+    "convertTime" : new Command("hidden", "converts time", async function(msg: dc.Message<boolean>, p) {
         const newTime = convertTime(p["time"], p["typeFrom"], p["typeTo"]);
-        await sendTo(message, (`${p["time"]} ${p["typeFrom"]} is ${newTime} ${p["typeTo"]}`));
+        await sendTo(msg, (`${p["time"]} ${p["typeFrom"]} is ${newTime} ${p["typeTo"]}`));
     }, [
         new Param("time", "", 0),
         new Param("typeFrom", "the time to convert from", "s"),
@@ -746,14 +766,14 @@ const commands = {
     // #endregion novelty
 
     // #region reactions
-    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (message: dc.Message<boolean>, p) {
+    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (msg: dc.Message<boolean>, p) {
         async function getMessage() {
-            const messages = await message.channel.messages.fetch({ limit: 2 });
+            const messages = await msg.channel.messages.fetch({ limit: 2 });
             const lastMessage = messages.last() ?? await getMessage();
             return lastMessage;
         }
 
-        const reference = p["reply"] !== "" ? message : await (message.reference !== null ? message.fetchReference() : getMessage());
+        const reference = p["reply"] !== "" ? msg : await (msg.reference !== null ? msg.fetchReference() : getMessage());
         const toMock    = p["reply"] !== "" ? p["reply"] : reference.content;
 
         const mock = [];
@@ -772,21 +792,21 @@ const commands = {
         
         await sendTo(p["reply"] === "" ? reference : reference.channel, mock.join(''));
 
-        await message.delete();
+        await msg.delete();
     }, [
         new Param("reply", "the message to mock", ""),
         new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
         new Param("message", "the message id to mock", ""),
     ]),
 
-    "true" : new Command("general/fun", emojis.true, async function (message: dc.Message<boolean>, p) {
+    "true" : new Command("general/fun", emojis.true, async function (msg: dc.Message<boolean>, p) {
         let reference: dc.Message<boolean>;
         try {
-            reference = await message.fetchReference();
-            await message.delete();
+            reference = await msg.fetchReference();
+            await msg.delete();
         } catch {
-            await message.delete();
-            const messages = await message.channel.messages.fetch({ limit: 1 });
+            await msg.delete();
+            const messages = await msg.channel.messages.fetch({ limit: 1 });
             reference = messages.first();
         }
 
@@ -804,14 +824,14 @@ const commands = {
         new Param("amount", `the amount you agree with this statement (capped at ${getBigData().trueEmojis.length})`, getBigData().trueEmojis.length),
     ], [], 10000),
 
-    "false" : new Command("hidden", "<:false:1123469352826576916>", async function (message: dc.Message<boolean>, p) {
+    "false" : new Command("hidden", "<:false:1123469352826576916>", async function (msg: dc.Message<boolean>, p) {
         let reference: dc.Message<boolean>;
         try {
-            reference = await message.fetchReference();
-            await message.delete();
+            reference = await msg.fetchReference();
+            await msg.delete();
         } catch {
-            await message.delete();
-            const messages = await message.channel.messages.fetch({ limit: 1 });
+            await msg.delete();
+            const messages = await msg.channel.messages.fetch({ limit: 1 });
             reference = messages.first();
         }
         
@@ -830,45 +850,45 @@ const commands = {
     // #endregion reactions
 
     // #region count/chain stuff
-    "countChannel" : new Command("patterns/counting", "sets the current channel to be the channel used for counting", async function (message: dc.Message<boolean>, p) {
-        let channel = message.channel as dc.TextChannel;
+    "countChannel" : new Command("patterns/counting", "sets the current channel to be the channel used for counting", async function (msg: dc.Message<boolean>, p) {
+        let channel = msg.channel as dc.TextChannel;
         if (p["channel"]) {
             try {
                 channel = await client.channels.fetch(p["channel"]) as dc.TextChannel;
             } catch (error) {
                 try {
-                    channel = message.guild.channels.cache.find(channel => channel.name.toLowerCase() === p["channel"].toLowerCase()) as dc.TextChannel;
+                    channel = msg.guild.channels.cache.find(channel => channel.name.toLowerCase() === p["channel"].toLowerCase()) as dc.TextChannel;
                 } catch (error) {
-                    await message.react('❌');
+                    await msg.react('❌');
                     return;
                 }
             }
         }
-        message.react('✅');
+        msg.react('✅');
         
-        const countChannel = get_s(message).count.channel;
+        const countChannel = get_s(msg).count.channel;
         const test = countChannel !== null && channel.id === countChannel.id;
         await sendTo(channel, test ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
-        get_s(message).count.channel = test ? null : channel;
+        get_s(msg).count.channel = test ? null : channel;
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [[ "438296397452935169" ]]),
 
-    "chainChannel" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (message: dc.Message<boolean>, p) {
-        let channel = message.channel as dc.TextChannel;
+    "chainChannel" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (msg: dc.Message<boolean>, p) {
+        let channel = msg.channel as dc.TextChannel;
         if (p["channel"]) {
             try {
                 channel = await client.channels.fetch(p["channel"]) as dc.TextChannel;
             } catch (error) {
                 try {
-                    channel = message.guild.channels.cache.find(channel => channel.name.toLowerCase() === p["channel"].toLowerCase()) as dc.TextChannel;
+                    channel = msg.guild.channels.cache.find(channel => channel.name.toLowerCase() === p["channel"].toLowerCase()) as dc.TextChannel;
                 } catch (error) {
-                    await message.react('❌');
+                    await msg.react('❌');
                     return;
                 }
             }
         }
-        message.react('✅');
+        msg.react('✅');
 
         if (channel.id === get_s(channel).count.channel.id) {
             await sendTo(channel, `counting in ${channel.name.toLowerCase()} has ceased.`);
@@ -879,60 +899,60 @@ const commands = {
         }
 
         // old stuff here
-        const channelId = p["channel"] ? p["channel"] : message.channel.id;
-        const isChannel = get_s(message).chain.channel === channelId;
+        const channelId = p["channel"] ? p["channel"] : msg.channel.id;
+        const isChannel = get_s(msg).chain.channel === channelId;
 
-        get_s(message).chain.channel = isChannel ? "" : channelId;
+        get_s(msg).chain.channel = isChannel ? "" : channelId;
         channel = client.channels.cache.get(channelId) as dc.TextChannel;
         await sendTo(channel, isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.')
-                .catch(async err => await sendTo(message, err));
+                .catch(async err => await sendTo(msg, err));
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [ [ "438296397452935169" ] ]),
 
-    "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (message: dc.Message<boolean>, p) {
-        get_s(message).chain.autoChain = p["howMany"];
-        debugLog(get_s(message).chain.autoChain);
-        await sendTo(message, (`autoChain is now ${get_s(message).chain.autoChain}.`));
+    "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (msg: dc.Message<boolean>, p) {
+        get_s(msg).chain.autoChain = p["howMany"];
+        debugLog(get_s(msg).chain.autoChain);
+        await sendTo(msg, (`autoChain is now ${get_s(msg).chain.autoChain}.`));
     }, [
         new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)
     ], [ [ "438296397452935169" ] ]),
     // #endregion count/chain
 
-    "slowMode" : new Command("server/channels", "artifically makes a slowmode, which means even admins can't get around it.", async function(message, p){
-        await sendTo(message, "wowza! you can manage channels. (no clue if this works so tell me if you can't. please)");
-        p["params"].forEach(x => console.log(x));
+    "slowMode" : new Command("server/channels", "artifically makes a slowmode, which means even admins can't get around it.", async function(msg, p){
+        await sendTo(msg, "wowza! you can manage channels. (no clue if this works so tell me if you can't. please)");
+        // p["params"].forEach(x => console.log(x));
     }, [
         new Param("params", "the channel ids affected", "")
     ], [ [], [ "ManageChannels" ] ]),
 
-    "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (message: dc.Message<boolean>, p) {
-        const cont = message.content.substring(message.content.indexOf(' ') + 1)
-        await parseCommand(message, cont, cont.split(' ')[0], cmdCommands);
+    "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (msg: dc.Message<boolean>, p) {
+        const cont = msg.content.substring(msg.content.indexOf(' ') + 1)
+        await parseCommand(msg, cont, cont.split(' ')[0], cmdCommands);
     }, [], [ [ "438296397452935169" ] ]),
 }
 
 // for more internal purposes; really just for astrl lol
 const cmdCommands = {
-    "help" : new Command("bot/support", "lists all cmd commands", async function (message: dc.Message<boolean>, p) {
+    "help" : new Command("bot/support", "lists all cmd commands", async function (msg: dc.Message<boolean>, p) {
         const reply = listCommands(cmdCommands, p["paramDescs"], p["whichCommand"]);
-        await sendTo(message, (reply));
+        await sendTo(msg, (reply));
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
         new Param("whichCommand", "will return help for a specific command", ""),
     ]),
 
-    "resetCount" : new Command("patterns/counting", "resets the current count", async function (message: dc.Message<boolean>, p) {
-        resetNumber(message, 'reset the count!', '✅');
+    "resetCount" : new Command("patterns/counting", "resets the current count", async function (msg: dc.Message<boolean>, p) {
+        resetNumber(msg, 'reset the count!', '✅');
     }, []),
 
-    "debug" : new Command("bot", "turns on/off debug mode (basically just sends more messages into the console)", async function (message: dc.Message<boolean>, p) {
+    "debug" : new Command("bot", "turns on/off debug mode (basically just sends more messages into the console)", async function (msg: dc.Message<boolean>, p) {
         debugMode = !debugMode;
-        await message.react('✅');
+        await msg.react('✅');
     }),
 
     // #region messaging
-    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message: dc.Message<boolean>, p) {
+    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg: dc.Message<boolean>, p) {
         try {
             const guild = client.guilds.cache.get(p["guild"]);
             if (guild !== undefined) {
@@ -940,7 +960,7 @@ const cmdCommands = {
                 await sendTo(channel, p["message"]);
             }
         } catch (error) {
-            await sendTo(message, "dumbass\n"+error)
+            await sendTo(msg, "dumbass\n"+error)
         }
     }, [
         new Param("message", "the message to send into the channel", "hey guys spam ping astrl in half an hour. it would be really really funny " + emojis.smide),
@@ -948,16 +968,16 @@ const cmdCommands = {
         new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
     ]),
 
-    "convo" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (message: dc.Message<boolean>, p) {
+    "convo" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg: dc.Message<boolean>, p) {
         try {
             const guild : dc.Guild = client.guilds.cache.get(p["guild"]);
             if (guild !== undefined) {
                 const channel = guild.channels.cache.get(p["channel"]);
-                get_s(message).convo.convoChannel = channel
-                get_s(message).convo.replyChannel = message.channel
+                get_s(msg).convo.convoChannel = channel
+                get_s(msg).convo.replyChannel = msg.channel
             }
         } catch (error) {
-            await sendTo(message, "dumbass\n"+error)
+            await sendTo(msg, "dumbass\n"+error)
         }
     }, [
         new Param("channel", "the channel id to send the message into", "1113944754460315759"), // cc bot commands channel id
@@ -965,14 +985,14 @@ const cmdCommands = {
     ]),
     // #endregion messaging
 
-    "restart" : new Command("bot", "restarts the bot", async function (message: dc.Message<boolean>, p) {
-        await sendTo(message.channel, 'bot is restarting');
+    "restart" : new Command("bot", "restarts the bot", async function (msg: dc.Message<boolean>, p) {
+        await sendTo(msg.channel, 'bot is restarting');
         await save();
         await client.destroy();
     }),
 
-    "kill" : new Command("bot", "kills the bot", async function (message: dc.Message<boolean>, p) {
-        await sendTo(message.channel, 'bot is now dead 😢');
+    "kill" : new Command("bot", "kills the bot", async function (msg: dc.Message<boolean>, p) {
+        await sendTo(msg.channel, 'bot is now dead 😢');
         await kill();
     }),
 
@@ -980,53 +1000,56 @@ const cmdCommands = {
     "save" : new Command("bot", "saves the bot's data", async (m, p) => await save()),
     "load" : new Command("bot", "loads the bot's data", async (m, p) => await load()),
 
-    "eval" : new Command("general/fun", "runs javascript code from a string", async function (message: dc.Message<boolean>, p) {
-        const cont = message.content;
+    "eval" : new Command("general/fun", "runs javascript code from a string", async function (msg1: dc.Message<boolean>, p) {
+        const cont = msg1.content;
         let reaction : Promise<dc.MessageReaction>;
         try {
-            reaction = message.react('✅');
+            reaction = msg1.react('✅');
             const code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
-            debugLog(await new Function('message', code)(message));
+            const msg = msg1; // 
+            const codeReturn = await eval(code);
+            console.log(codeReturn);
         } catch (error) {
             await reaction.then(async reaction => {
                 await reaction.remove();
-                await message.react('❌');
-                await sendTo(message, (error));
+                await msg1.react('❌');
+                await sendTo(msg1, (error));
             })
         }
     }),
 
-    "evalReturn" : new Command("general/fun", "runs javascript code from a string", async function (message: dc.Message<boolean>, p) {
-        const cont = message.content;
+    "evalReturn" : new Command("general/fun", "runs javascript code from a string", async function (msg1: dc.Message<boolean>, p) {
+        const cont = msg1.content;
         let reaction : Promise<dc.MessageReaction>;
         try {
-            reaction = message.react('✅');
+            reaction = msg1.react('✅');
             const code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
-            const codeReturn = await new Function('message', code)(message);
-            await sendTo(message, codeReturn)
+            const msg = msg1;
+            const codeReturn = await eval(code);
+            await sendTo(msg1, codeReturn)
         } catch (error) {
             await reaction.then(async reaction => {
                 await reaction.remove();
-                await message.react('❌');
-                await sendTo(message, (error));
+                await msg1.react('❌');
+                await sendTo(msg1, (error));
             })
         }
     }),
 
-    "didAnythingBreak?" : new Command("hidden", "just testing every command until something breaks", async function (message: dc.Message<boolean>, p) {
+    "didAnythingBreak?" : new Command("hidden", "just testing every command until something breaks", async function (msg: dc.Message<boolean>, p) {
         // this is silly and doesn't really work lol
         const keys = Object.keys(commands);
         for (let i = 0; i < keys.length; i++) {
-            await sendTo(message, ("testing command " + keys[i]))
-            await sleepPush(1, Time.second);
-            await parseCommand(message, (config.prefix + keys[i]), keys[i], commands);
-            await sleepPush(1, Time.second);
+            await sendTo(msg, ("testing command " + keys[i]))
+            await sleep(1, Time.second);
+            await parseCommand(msg, (config.prefix + keys[i]), keys[i], commands);
+            await sleep(1, Time.second);
         }
 
-        await sendTo(message, "finished!");
+        await sendTo(msg, "finished!");
     }),
 
-    "sanityCheck" : new Command("hidden", "do several checks on all the commands to make sure they're up to snuff", async function(message: dc.Message<boolean>, p) {
+    "sanityCheck" : new Command("hidden", "do several checks on all the commands to make sure they're up to snuff", async function(msg: dc.Message<boolean>, p) {
         const overlaps = [];
         const reply : string[] = []
         const keys = Object.keys(commands)
@@ -1046,7 +1069,7 @@ const cmdCommands = {
         reply.push(overlaps.length > 0 ?
             "overlaps:\n" + overlaps.join('\n') +"\nastrl u dumbass" : 
             "no overlaps here! wow isn't astrl such a good programmer" + emojis.smide);
-        await sendTo(message, (reply.join('\n')));
+        await sendTo(msg, (reply.join('\n')));
     }, [
         // new Param("doubleUp", "desription on", 52),
         // new Param("doubleUp", "descirtpn dos", "this is a default"),
@@ -1054,7 +1077,7 @@ const cmdCommands = {
     // #endregion
 
     // keep this at the bottom, i just want easy access to it
-    "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (message: dc.Message<boolean>, p) {
+    "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (msg: dc.Message<boolean>, p) {
         // debugLog("params : " + (p["params"]));
         let keys = Object.keys(Time);
         let values = Object.values(Time);
