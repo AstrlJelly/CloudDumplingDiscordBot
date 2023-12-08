@@ -1,4 +1,3 @@
-// Require the necessary discord.js classes
 // import process from 'node:process';
 import fs from 'fs';
 import os from 'os';
@@ -9,6 +8,8 @@ import _ from 'underscore';
 import * as mathjs from 'mathjs';
 import { wordsToNumbers } from 'words-to-numbers';
 import { google } from 'googleapis';
+
+let debugMode = true;
 
 const config = JSON.parse(fs.readFileSync('./private/config.json', 'utf-8'));
 const emojis = JSON.parse(fs.readFileSync('./emojis.json', 'utf-8'));
@@ -46,7 +47,20 @@ function findTime(time : string) : number {
     return (newTime);
 }
 
-let debugMode = false;
+// scp client, currently just for grabbing
+const remote_server = {
+    host: '150.230.169.222',
+    port: 22,
+    username: 'opc',
+}
+if (fs.existsSync("./private/ssh.key")) {
+    remote_server["privateKey"] = fs.readFileSync('./private/ssh.key');
+}
+
+let jermaFiles: string[], jermaClips: any[];
+let scpClient: scp.ScpClient;
+
+// #region bigData
 let bigDataTemp = null;
 
 // exists because i don't want so much data in memory, but i need to use big-data multiple times in a row
@@ -66,20 +80,9 @@ async function wipeBigData() {
     await sleep(10, Time.second);
     bigDataTemp = null;
 }
+// #endregion bigData
 
-// scp client, currently just for grabbing
-const remote_server = {
-    host: '150.230.169.222',
-    port: 22,
-    username: 'opc',
-}
-if (fs.existsSync("./private/ssh.key")) {
-    remote_server["privateKey"] = fs.readFileSync('./private/ssh.key');
-}
-
-let jermaFiles: string[], jermaClips: any[];
-let scpClient: scp.ScpClient;
-
+// #region extension/helper functions 
 function sendTo(target : dc.Message | dc.TextBasedChannel, content : string, ping : boolean = false, files : string[] = []) : Promise<dc.Message> | undefined {
     content = String(content);
     const length = content.length;
@@ -109,22 +112,44 @@ function debugLog(content : any) {
     }
 }
 
-// might be just a terrible bandaid solution for something i should handle in special occasions
-// doesn't really work rn anyways lol. doesn't have the info to pick up on the functions needed
-// async function sleepPush(time : number, convert : Time = Time.millisecond) : Promise<void> {
-//     allTimeouts.push({ 
-//         timeout : convert,
-//         startTime : Date.now(),
-//     });
-//     return sleep(time, convert);
-// }
-
-async function sleep(time : number, convert : Time = Time.millisecond) : Promise<void> {
-    if (convert !== Time.millisecond) time = convertTime(time, convert, Time.millisecond) // always wanna keep it milliseconds
-    debugLog("sleep for " + time + " milliseconds")
-    return new Promise<void>((resolve) => setTimeout(resolve, time));
+// it's funny cuz most of the time this beats out the alternatives
+function newObj(obj : object) {
+    return JSON.parse(JSON.stringify(obj));
 }
 
+function _sGet(target: any) {
+    let id = target;
+    if (typeof target !== typeof String) {
+        id = target?.guildId ?? target?.guild.id ?? target?.id;
+    }
+    if (typeof id === typeof String) {
+        throw new Error("typeof " + typeof target + " not accepted into _sGet!");
+    }
+    if (!_s.hasOwnProperty(id)) {
+        console.warn("server with id " + id + " doesn't have an _s object! giving it one now.");
+        _s[id] = newObj(_s["default"]);
+    }
+    
+    return _s[id];
+}
+
+// converts from seconds to minutes, hours to ms, minutes to days, etc.
+function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Time.millisecond) {
+    if (typeTo === typeFrom) return time;
+
+    let modifier = 1;
+    const converts = [ 1000, 60, 60, 24, 7];
+
+    for (let i = mathjs.min(typeFrom, typeTo); i < mathjs.max(typeFrom, typeTo); i++) {
+        modifier *= converts[i];
+    }
+
+    return (typeFrom > typeTo) ? (time * modifier) : (time / modifier);
+}
+
+// #endregion extension/help functions
+
+// #region save/load
 async function autoSave() {
     await sleep(1, Time.minute);
     console.info("Autosaving...");
@@ -166,7 +191,6 @@ async function load() {
             datas[i][1] = JSON.parse(data);
             console.info("The file was loaded!");
 
-            // 
             function defaultCheck(obj : object, objAdd : object, root : string) {
                 Object.keys(obj).forEach(key => {
                     const value = obj[key];
@@ -199,7 +223,8 @@ async function load() {
     client.guilds.cache.forEach(guild => {
         if (!datas[0][1].hasOwnProperty(guild.id)) { // if there's no server object
             console.info("Guild with id \"" + guild.id + "\" set to default");
-            _s[guild.id] = JSON.parse(JSON.stringify(_s["default"])); // this might be a terrible idea but it Just Works
+            // as long as things aren't undefined, a function, or a new Date(), this is a better way to do things (otherwise use structuredClen)
+            _s[guild.id] = newObj(_s["default"]);
         } else {                                 // if there is a server object
             console.info("LOADED guild with id \"" + guild.id + "\"");
             _s[guild.id] = datas[0][1][guild.id];
@@ -207,20 +232,36 @@ async function load() {
             // uses the newDefaults array to grab keys
             for (let i = 0; i < newDefaults.length; i++) {
                 const keys = newDefaults[i].split('/')
-                switch (keys.length) { // dude there's gotta be a better way to do this
-                    case 1: _s[guild.id][keys[0]] = _s["default"][keys[0]];
-                        break;
-                    case 2: _s[guild.id][keys[0]][keys[1]] = _s["default"][keys[0]][keys[1]];
-                        break;
-                    case 3: _s[guild.id][keys[0]][keys[1]][keys[2]] = _s["default"][keys[0]][keys[1]][keys[2]];
-                        break;
-                    default: console.error(`${newDefaults[i]} is too deep/broken! help me!!!`)
-                        break;
+                ///////////////////////////////////////////////////////////////////////////////////////eval method, might not work
+                // let soDeep = keys.join("']['");
+                // console.log("_s[guild.id]['" + soDeep + "'] = _s['default']['" + soDeep + "']");
+                // eval("_s[guild.id]['" + soDeep + "'] = _s['default']['" + soDeep + "']");
+                /////////////////////////////////////////////////////////////////////////////////////// generator
+                function* deepObj() {
+                    yield _s[guild.id][keys[0]];
                 }
+                ////////////////////////////////////////////////////////////////////////////////////// switch case
+                // switch (keys.length) { // dude there's gotta be a better way to do this
+                //     case 1: _s[guild.id][keys[0]] = _s["default"][keys[0]];
+                //         break;
+                //     case 2: _s[guild.id][keys[0]][keys[1]] = _s["default"][keys[0]][keys[1]];
+                //         break;
+                //     case 3: _s[guild.id][keys[0]][keys[1]][keys[2]] = _s["default"][keys[0]][keys[1]][keys[2]];
+                //         break;
+                //     default: console.error(`${newDefaults[i]} is too deep/broken! help me!!!`)
+                //         break;
+                // }
             }
         }
     })
     debugLog("Took " + ((performance.now() - before) / 1000) + " milliseconds to finish loading from JSON");
+}
+// #endregion save/load
+
+async function sleep(time : number, convert : Time = Time.millisecond) : Promise<void> {
+    if (convert !== Time.millisecond) time = convertTime(time, convert, Time.millisecond) // always wanna keep it milliseconds
+    debugLog("sleep for " + time + " milliseconds")
+    return new Promise<void>((resolve) => setTimeout(resolve, time));
 }
 
 async function kill() {
@@ -229,38 +270,7 @@ async function kill() {
     process.exit();
 }
 
-function get_s(target: any) {
-    let id = target;
-    if (typeof target !== typeof String) {
-        id = target?.guildId ?? target?.guild.id ?? target?.id;
-    }
-    
-    return _s[id];
-}
-
-function currentTime() {
-    // let parse = Math.round(performance.now() * 1000) / 1000
-    return Math.round(performance.now() * 1000) / 1000;
-}
-
-// converts from seconds to minutes, hours to ms, minutes to days, etc.
-function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Time.millisecond) {
-    if (typeTo === typeFrom) return time;
-
-    let modifier = 1;
-    const converts = [ 1000, 60, 60, 24, 7];
-
-    for (let i = mathjs.min(typeFrom, typeTo); i < mathjs.max(typeFrom, typeTo); i++) {
-        modifier *= converts[i];
-    }
-
-    return (typeFrom > typeTo) ? (time * modifier) : (time / modifier);
-}
-
-function enumKeys(enumToParse : object) {
-
-}
-
+// #region classes
 class Command {
     genre : string
     desc: string
@@ -302,14 +312,9 @@ class Param {
         this.name = name;
         this.desc = desc;
         this.preset = preset;
-        this.type = typeof (type ?? preset);
     }
 }
-
-// let sillyObj = {
-//     "391459218034786304" : 0, // untitled
-//     "999020930800033876" : 0, // raffy
-// }
+// #endregion classes
 
 const _s = {
     "default" : {
@@ -355,8 +360,9 @@ process.on('SIGINT', async () => {
     await kill();
 });
 
+// #region counting/chain stuff
 async function resetNumber(message: dc.Message<boolean>, reply = 'empty. astrl screwed up lol', react = '💀') {
-    const count = get_s(message).count;
+    const count = _sGet(message).count;
     if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
     count.lastCounter = '';
     count.prevNumber = count.currentNum;
@@ -367,7 +373,7 @@ async function resetNumber(message: dc.Message<boolean>, reply = 'empty. astrl s
 
 async function chainFunc(message: dc.Message<boolean>, inRow: string | number) {
     debugLog("First " + inRow);
-    const chain = get_s(message).chain;
+    const chain = _sGet(message).chain;
     if (!chain.currentChain) {
         chain.currentChain = message.content.toLowerCase();
         chain.chainAmount = 1;
@@ -386,13 +392,20 @@ async function chainFunc(message: dc.Message<boolean>, inRow: string | number) {
     debugLog(chain);
     debugLog(inRow);
 }
+// #endregion counting/chain stuff
 
+// #region client events
 // when the client is ready, run this code
 client.once(dc.Events.ClientReady, async c => {
     console.info(`Ready! Logged in as ${c.user.tag}`);
     await load();
     autoSave();
 });
+
+client.on(dc.Events.GuildCreate, guild => {
+    console.log("Joined a new guild: " + guild.name);
+    _sGet(guild.id);
+})
 
 client.on(dc.Events.MessageCreate, async (msg) => {
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
@@ -402,7 +415,7 @@ client.on(dc.Events.MessageCreate, async (msg) => {
     const id = msg.author.id;
 
     if (!_u.hasOwnProperty(id)) {
-        _u[id] = JSON.parse(JSON.stringify(_u["default"]));
+        _u[id] = newObj(_u["default"]);
     }
 
     const userData = _u[id];
@@ -440,7 +453,7 @@ client.on(dc.Events.MessageCreate, async (msg) => {
     // #endregion
 
     // #region counting and chain handler
-    const count = get_s(msg).count;
+    const count = _sGet(msg).count;
 
     if (msg.channel.id === count.channel?.id) {
         let num = 0;
@@ -461,7 +474,7 @@ client.on(dc.Events.MessageCreate, async (msg) => {
         }
         
         if (count.lastCounter === id) {
-            resetNumber(msg, 'uhhh... you know you can\'t count twice in a row, right??');
+            resetNumber(msg, "uhhh... you know you can't count twice in a row, right??");
             return;
         }
 
@@ -469,34 +482,36 @@ client.on(dc.Events.MessageCreate, async (msg) => {
             msg.react('✅');
             count.lastCounter = id;
             count.current++;
-            debugLog("Count current : " + get_s(msg).count.current);
+            debugLog("Count current : " + _sGet(msg).count.current);
         } else {
             resetNumber(msg, (count.prevNumber < 10) ?
-                'you can do better than THAT...' :
+                "you can do better than THAT..." :
                 'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
             );
         }
-    } else if (msg.channel.id === get_s(msg).chain.channel) {
+    } else if (msg.channel.id === _sGet(msg).chain.channel) {
         await chainFunc(msg, 3);
-    } else if (get_s(msg).chain.autoChain >= 0) {
+    } else if (_sGet(msg).chain.autoChain >= 0) {
         //chainFunc(message, chain.autoChain);
     }
-    if (get_s(msg).convo.convoChannel?.id === msg.channel.id) {
-        const replyChannel = get_s(msg).convo.replyChannel;
+    if (_sGet(msg).convo.convoChannel?.id === msg.channel.id) {
+        const replyChannel = _sGet(msg).convo.replyChannel;
         await sendTo(replyChannel, `${msg.author.displayName}[:](${msg.url})`);
-    } else if (get_s(msg).convo.replyChannel?.id === msg.channel.id) {
-        await sendTo(get_s(msg).convo.convoChannel, msg.content);
+    } else if (_sGet(msg).convo.replyChannel?.id === msg.channel.id) {
+        await sendTo(_sGet(msg).convo.convoChannel, msg.content);
     }
     // #endregion
 });
+// #endregion client events
 
+// #region command helper functions
 async function parseCommand(msg: dc.Message<boolean>, content: string, command: string, comms: object) : Promise<Command>
 {
     if (!comms.hasOwnProperty(command)) {
         console.error("Nope. No " + command + " here.");
         return null;
     }
-    const timeBefore : number = currentTime();
+    const timeBefore : number = performance.now();
     const com : Command = comms[command];
     const permissions : string[] = msg.member.permissions.toArray();
 
@@ -504,9 +519,7 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
     const notLimited : boolean = com.limitedTo[0] == null || com.limitedTo[0]?.includes(msg.author.id);
     const hasPerms : boolean = (_.intersection(com.limitedTo[1], permissions)).length > 0;
 
-    console.log("trusted : " + trusted);
-    console.log("notLimited : " + notLimited);
-    console.log("hasPerms : " + hasPerms);
+    debugLog(msg.author.username + " -- trusted : " + trusted + ", notLimited : " + notLimited + ", hasPerms : " + hasPerms);
 
     // if not limited to anybody, if limited to the message author/their permissions, or if user is fully trusted
     if (trusted || notLimited || hasPerms) {
@@ -611,11 +624,11 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
         });
 
         try {
-            const comTime = currentTime();
+            const comTime = performance.now();
             com.currentTimeout = (Date.now() + com.timeout);
             debugLog(`Took ${comTime - timeBefore} milliseconds to complete parsing message`);
             await com.func(msg, paramObj);
-            debugLog(`Took ${currentTime() - comTime} milliseconds to finish function`);
+            debugLog(`Took ${performance.now() - comTime} milliseconds to finish function`);
         } catch (error) {
             console.error(error);
             await sendTo(msg, error, false);
@@ -643,13 +656,28 @@ function listCommands(commandObj : object, listDescs : boolean = false, singleCo
         
         if (listDescs) {
             const params = [];
-            com.params.forEach(x => params.push(`-${x.name} (${String(x.type)}) : ${x.desc}\n`));
+            com.params.forEach(x => params.push(`-${x.name} (${x.preset} : ${String(x.type)}) : ${x.desc}\n`));
             response.push(params.join(''));
         }
     }
+
+    // #region new stuff
+    const pages : string[][] = [];
+    let page : number = 0;
+    let pageLength : number = 0;
+    for (let i = 0; i < response.length; i++) {
+        pageLength += response[i].length;
+        if (pageLength > 2000) {
+            pageLength = 0;
+            page++;
+        }
+        pages[page].push(response[i]);
+    }
+    // #endregion
     
     return response.join('');
 }
+// #endregion command helper functions
 
 const genres = {};
 // used to cache data like the help command, so that resources aren't wasted generating it again
@@ -866,10 +894,10 @@ const commands = {
         }
         msg.react('✅');
         
-        const countChannel = get_s(msg).count.channel;
+        const countChannel = _sGet(msg).count.channel;
         const test = countChannel !== null && channel.id === countChannel.id;
         await sendTo(channel, test ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
-        get_s(msg).count.channel = test ? null : channel;
+        _sGet(msg).count.channel = test ? null : channel;
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [[ "438296397452935169" ]]),
@@ -890,19 +918,19 @@ const commands = {
         }
         msg.react('✅');
 
-        if (channel.id === get_s(channel).count.channel.id) {
+        if (channel.id === _sGet(channel).count.channel.id) {
             await sendTo(channel, `counting in ${channel.name.toLowerCase()} has ceased.`);
-            get_s(channel).count.channel = null;
+            _sGet(channel).count.channel = null;
         } else {
             await sendTo(channel, `alright, count in ${channel.name.toLowerCase()}!`);
-            get_s(channel).count.channel = channel;
+            _sGet(channel).count.channel = channel;
         }
 
         // old stuff here
         const channelId = p["channel"] ? p["channel"] : msg.channel.id;
-        const isChannel = get_s(msg).chain.channel === channelId;
+        const isChannel = _sGet(msg).chain.channel === channelId;
 
-        get_s(msg).chain.channel = isChannel ? "" : channelId;
+        _sGet(msg).chain.channel = isChannel ? "" : channelId;
         channel = client.channels.cache.get(channelId) as dc.TextChannel;
         await sendTo(channel, isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.')
                 .catch(async err => await sendTo(msg, err));
@@ -911,9 +939,9 @@ const commands = {
     ], [ [ "438296397452935169" ] ]),
 
     "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (msg: dc.Message<boolean>, p) {
-        get_s(msg).chain.autoChain = p["howMany"];
-        debugLog(get_s(msg).chain.autoChain);
-        await sendTo(msg, (`autoChain is now ${get_s(msg).chain.autoChain}.`));
+        _sGet(msg).chain.autoChain = p["howMany"];
+        debugLog(_sGet(msg).chain.autoChain);
+        await sendTo(msg, (`autoChain is now ${_sGet(msg).chain.autoChain}.`));
     }, [
         new Param("howMany", "how many messages in a row does it take for the chain to trigger?", 4)
     ], [ [ "438296397452935169" ] ]),
@@ -973,8 +1001,8 @@ const cmdCommands = {
             const guild : dc.Guild = client.guilds.cache.get(p["guild"]);
             if (guild !== undefined) {
                 const channel = guild.channels.cache.get(p["channel"]);
-                get_s(msg).convo.convoChannel = channel
-                get_s(msg).convo.replyChannel = msg.channel
+                _sGet(msg).convo.convoChannel = channel
+                _sGet(msg).convo.replyChannel = msg.channel
             }
         } catch (error) {
             await sendTo(msg, "dumbass\n"+error)
@@ -1006,7 +1034,7 @@ const cmdCommands = {
         try {
             reaction = msg1.react('✅');
             const code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
-            const msg = msg1; // 
+            const msg = msg1; // the only way to get the message in eval (why?? idk. it was working before)
             const codeReturn = await eval(code);
             console.log(codeReturn);
         } catch (error) {
@@ -1024,7 +1052,7 @@ const cmdCommands = {
         try {
             reaction = msg1.react('✅');
             const code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
-            const msg = msg1;
+            const msg = msg1; // refer to $eval for why this exists
             const codeReturn = await eval(code);
             await sendTo(msg1, codeReturn)
         } catch (error) {
@@ -1078,13 +1106,17 @@ const cmdCommands = {
 
     // keep this at the bottom, i just want easy access to it
     "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (msg: dc.Message<boolean>, p) {
-        // debugLog("params : " + (p["params"]));
-        let keys = Object.keys(Time);
-        let values = Object.values(Time);
-        let entries = Object.entries(Time);
-        console.log(keys);
-        console.log(values);
-        console.log(entries);
+        let first = performance.now();
+        for (let i = 0; i < 5000; i++) {
+            newObj(_s["default"]);
+        }
+        let middle = performance.now();
+        for (let i = 0; i < 5000; i++) {
+            structuredClone(_s["default"]);
+        }
+        let end = performance.now();
+        await sendTo(msg, "JSON stringify + parse took " + ((middle - first)) + " milliseconds to complete");
+        await sendTo(msg, "structuredClone took " + ((end - middle)) + " milliseconds to complete");
     }, [
         new Param("lol", "use this for anything", ""),
         new Param("params", "how new and innovative!", 0)
