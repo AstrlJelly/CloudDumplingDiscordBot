@@ -119,7 +119,7 @@ function debugLog(content : any) {
     }
 }
 
-// it's funny cuz most of the time this beats out the alternatives
+// it's funny cuz most of the time this beats out the alternatives (i.e just structuredClone)
 function newObj(obj : object) {
     return JSON.parse(JSON.stringify(obj));
 }
@@ -228,25 +228,24 @@ async function load() {
     }
 
     client.guilds.cache.forEach(guild => {
-        if (!datas[0][1].hasOwnProperty(guild.id)) { // if there's no server object
-            console.info("Guild with id \"" + guild.id + "\" set to default");
-            // as long as things aren't undefined, a function, or a new Date(), this is a better way to do things (otherwise use structuredClen)
-            _s[guild.id] = newObj(_s["default"]);
+        let id = guild.id;
+        if (!datas[0][1].hasOwnProperty(id)) { // if there's no server object
+            console.info("Guild with id \"" + id + "\" set to default");
+            // as long as things aren't undefined, a function, or a new Date(), this is a better way to do things (otherwise use structuredClone)
+            _s[id] = newObj(_s["default"]);
         } else {                                 // if there is a server object
-            console.info("LOADED guild with id \"" + guild.id + "\"");
-            _s[guild.id] = datas[0][1][guild.id];
+            console.info("LOADED guild with id \"" + id + "\"");
+            _s[id] = datas[0][1][id];
 
             // uses the newDefaults array to grab keys
             let tempObjs : object[];
             for (let i = 0; i < newDefaults.length; i++) {
-                tempObjs = [ _s[guild.id], _s.default ]
+                tempObjs = [ _s[id], _s.default ];
                 const keys = newDefaults[i].split('/');
                 let j: number = 0;
                 for (j = 0; j < keys.length - 1; j++) {
-                    // tempObjs = [ tempObjs[0][keys[j]], tempObjs[1][keys[j]] ];
-                    tempObjs.map(obj => obj[keys[j]]);
+                    tempObjs.map(obj => obj[keys[j]]); // get the object of the previous object, and set each to each element
                 }
-                console.log("\n---------------------------\n");
                 tempObjs[0][keys[j]] = tempObjs[1][keys[j]];
             }
         }
@@ -742,28 +741,27 @@ const commands = {
     "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (msg: dc.Message<boolean>, p) {
         switch (p["fileType"]) {
             case 0: {
-                if (os.hostname() !== "hero-corp") {
-                    await sendTo(msg, "sorry, jerma 0 only works on astrl's main pc. im being hosting from somewhere else rn")
-                    return;
-                }
                 const reaction = msg.react('✅');
-                if (!scpClient) scpClient = await scp.Client(remote_server);
-                await scpClient.list('/home/opc/mediaHosting/jermaSFX/').then(x => x.forEach(x => debugLog(JSON.stringify(x))));
-                if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
-                const result = `./temp/${p["fileName"]}.mp3`;
-                const index = Math.round(Math.random() * jermaFiles.length - 1);
-                console.log(jermaFiles[index])
-                await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index]["name"]}`, result);
-                console.log("2")
-                await sendTo(msg.channel, "", true, [result]);
-                // await msg.channel.send({files: [result]});
-                fs.unlinkSync(result);
                 try {
+                    if (!scpClient) scpClient = await scp.Client(remote_server);
+                    await scpClient.list('/home/opc/mediaHosting/jermaSFX/').then(x => x.forEach(x => debugLog(JSON.stringify(x))));
+                    if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
+                    const result = `./temp/${p["fileName"]}.mp3`;
+                    const index = Math.round(Math.random() * jermaFiles.length - 1);
+                    console.log(jermaFiles[index])
+                    await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index]["name"]}`, result);
+                    await sendTo(msg.channel, "", true, [result]);
+                    // await msg.channel.send({files: [result]});
+                    fs.unlinkSync(result);
                 } catch (error) {
                     console.error(error);
                     await reaction;
                     await msg.reactions.removeAll().catch(error => console.error('Failed to remove reactions:\n', error));
                     await msg.react('❌');
+                    if (os.hostname() === "macBOROS") {
+                        await sendTo(msg, "sorry, jerma 0 only works on astrl's main pc. im being hosting from somewhere else rn")
+                        return;
+                    }
                 }
             } break;
             case 1: {
