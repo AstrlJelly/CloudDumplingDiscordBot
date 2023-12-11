@@ -69,23 +69,27 @@ let scpClient: scp.ScpClient;
 
 // #region bigData
 let bigDataTemp = null;
+let bigDataTimeout : NodeJS.Timeout;
 
 // exists because i don't want so much data in memory, but i need to use big-data multiple times in a row
 function getBigData() {
-    if (fs.existsSync("./big-data.json")) {
-        if (!bigDataTemp) {
-            bigDataTemp = JSON.parse(fs.readFileSync("./big-data.json", 'utf-8'))
-            wipeBigData();
+    if (!bigDataTemp) {
+        if (fs.existsSync("./big-data.json")) {
+            bigDataTemp = JSON.parse(fs.readFileSync("./big-data.json", 'utf-8'));
+        } else {
+            throw new Error("Big-data doesn't exist...");
         }
-        return bigDataTemp;
-    } else {
-        console.error("Big-data doesn't exist...")
     }
+    wipeBigData();
+    return bigDataTemp;
 }
 
-async function wipeBigData() {
-    await sleep(10, Time.second);
-    bigDataTemp = null;
+function wipeBigData() {
+    if (!bigDataTimeout) {
+        bigDataTimeout = setTimeout(() => { bigDataTemp = null; }, convertTime(10, Time.second));
+    } else {
+        bigDataTimeout = bigDataTimeout.refresh();
+    }
 }
 // #endregion bigData
 
@@ -101,7 +105,7 @@ function sendTo(target : dc.Message | dc.TextBasedChannel, content : string, pin
     const replyObj = { content: content, allowedMentions: { repliedUser: (ping) } };
     if (files?.length !== 0) replyObj["files"] = files;
     
-    if ((target as dc.Message).reply !== undefined) {
+    if ((target as dc.Message).reply !== undefined) { // lol
         return (target as dc.Message).reply(replyObj);
     } else if ((target as dc.TextChannel).send !== undefined) {
         return (target as dc.TextChannel).send(replyObj);
@@ -112,7 +116,7 @@ function debugLog(content : any) {
     if (debugMode) {
         if (typeof content === typeof Object) {
             content = JSON.stringify(content, null, "\t")
-        } else if (typeof content !== typeof String) {
+        } else if (typeof content !== "string") {
             content = String(content);
         }
         console.info(content);
@@ -126,10 +130,10 @@ function newObj(obj : object) {
 
 function _sGet(target: any) {
     let id = target;
-    if (typeof target !== typeof String) {
+    if (typeof target !== "string") {
         id = target?.guildId ?? target?.guild.id ?? target?.id;
     }
-    if (typeof id === typeof String) {
+    if (typeof id !== "string") {
         throw new Error("typeof " + typeof target + " not accepted into _sGet!");
     }
     if (!_s.hasOwnProperty(id)) {
@@ -404,7 +408,7 @@ client.once(dc.Events.ClientReady, async c => {
 });
 
 client.on(dc.Events.GuildCreate, guild => {
-    console.log("Joined a new guild: " + guild.name);
+    console.info("Joined a new guild: " + guild.name);
     void _sGet(guild.id);
 });
 
@@ -413,13 +417,13 @@ client.on(dc.Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
 
     const commandFromMessage = msg.content.split(' ')[0].substring(config.prefix.length);
-    const id = msg.author.id;
+    const authorId = msg.author.id;
 
-    if (!_u.hasOwnProperty(id)) {
-        _u[id] = newObj(_u["default"]);
+    if (!_u.hasOwnProperty(authorId)) {
+        _u[authorId] = newObj(_u["default"]);
     }
 
-    const userData = _u[id];
+    const userData = _u[authorId];
 
     // #region command handler
     if (msg.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
@@ -474,14 +478,14 @@ client.on(dc.Events.MessageCreate, async (msg) => {
             } else return;
         }
         
-        if (count.lastCounter === id) {
+        if (count.lastCounter === authorId) {
             resetNumber(msg, "uhhh... you know you can't count twice in a row, right??");
             return;
         }
 
         if (num === count.current + 1) {
             msg.react('✅');
-            count.lastCounter = id;
+            count.lastCounter = authorId;
             count.current++;
             debugLog("Count current : " + _sGet(msg).count.current);
         } else {
@@ -600,7 +604,6 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
                 } else {
                     const param = com.params[j];
                     paramObj[param.name] = convParam(tempParameters[i], param.type)
-                    console.log(com.params[j]);
                     j++;
                 }
                 i++;
@@ -608,8 +611,6 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
 
             if (com.inf && (i < tempParameters.length)) {
                 while (i < tempParameters.length) {
-                    console.log("paramObj.params : " + paramObj.params);
-                    console.log("typeof paramObj.params : " + typeof paramObj.params);
                     paramObj.params.push(convParam(tempParameters[i], typeof (com.params["params"])));
                     debugLog(`param ${tempParameters[i]}`);
                     i++;
@@ -748,7 +749,6 @@ const commands = {
                     if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
                     const result = `./temp/${p["fileName"]}.mp3`;
                     const index = Math.round(Math.random() * jermaFiles.length - 1);
-                    console.log(jermaFiles[index])
                     await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index]["name"]}`, result);
                     await sendTo(msg.channel, "", true, [result]);
                     // await msg.channel.send({files: [result]});
@@ -808,14 +808,6 @@ const commands = {
         const mock = [];
         for (let i = 0; i < toMock.length; i++) {
             const vary = i % 2 === 0;
-            // if (p["variance"] !== 0) {
-            //     let vary = i % 2 === 0;
-            // }
-
-            // let vary;
-            // if (mock[i - 1] === mock[i - 1].toLowerCase()) {
-            //     vary = ;
-            // }
             mock.push(vary ? toMock[i].toLowerCase() : toMock[i].toUpperCase());
         }
         
@@ -950,7 +942,6 @@ const commands = {
 
     "slowMode" : new Command("server/channels", "artifically makes a slowmode, which means even admins can't get around it.", async function(msg, p){
         await sendTo(msg, "wowza! you can manage channels. (no clue if this works so tell me if you can't. please)");
-        // p["params"].forEach(x => console.log(x));
     }, [
         new Param("params", "the channel ids affected", "")
     ], [ [], [ "ManageChannels" ] ]),
@@ -1037,7 +1028,7 @@ const cmdCommands = {
             const code = cont.substring(cont.indexOf(' ', cont.indexOf(' ') + 1) + 1);
             const msg = msg1; // the only way to get the message in eval (why?? idk. it was working before)
             const codeReturn = await eval(code);
-            console.log(codeReturn);
+            console.info(codeReturn);
         } catch (error) {
             await reaction.then(async reaction => {
                 await reaction.remove();

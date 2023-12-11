@@ -246,5 +246,33 @@
 			"convoChannel": null,
 			"replyChannel": null
 		}
+	},
+	"1145225445260922880": {
+		"commands": {},
+		"count": {
+			"channel": null,
+			"current": 0,
+			"prevNumber": 0,
+			"highestNum": 0,
+			"lastCounter": ""
+		},
+		"chain": {
+			"channel": null,
+			"current": "",
+			"chainLength": 0,
+			"prevChain": "",
+			"lastChainer": "",
+			"autoChain": 0
+		},
+		"convo": {
+			"convoChannel": null,
+			"replyChannel": null
+		},
+		"mwuah1": {
+			"mwuah2": "hehehe",
+			"mwuah3": {
+				"mwuah4": "hehehehe"
+			}
+		}
 	}
 }
