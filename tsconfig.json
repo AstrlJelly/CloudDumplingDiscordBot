@@ -6,6 +6,7 @@
     "files": [
         "./index.ts",
         "./commands.ts",
+        "./testing.ts",
     ],
     "exclude": ["node_modules"],
     "editor.codeActionsOnSave": {

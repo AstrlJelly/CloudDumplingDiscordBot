@@ -23,6 +23,7 @@
     "keyv": "^4.5.3",
     "math.js": "^1.1.46",
     "mathjs": "^11.10.0",
+    "neataptic": "^1.4.7",
     "node-scp": "^0.0.23",
     "underscore": "^1.13.6",
     "words-to-numbers": "^1.5.1",

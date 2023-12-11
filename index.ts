@@ -5,11 +5,20 @@ import scp from 'node-scp';
 import dc from 'discord.js';
 import _ from 'underscore';
 // import brain from 'brain.js';
+// import neat from 'neataptic';
 import * as mathjs from 'mathjs';
 import { wordsToNumbers } from 'words-to-numbers';
 import { google } from 'googleapis';
 
 let debugMode = true;
+
+const shouldExist = [ "private/config.json", "emojis.json", "private/ssh.key" ];
+for (let i = 0; i < shouldExist.length; i++) {
+    const path = "./" + shouldExist[i];
+    if (!fs.existsSync(path)) {
+        throw new Error("wts!?!? " + path + " doesn't exist");
+    }
+}
 
 const config = JSON.parse(fs.readFileSync('./private/config.json', 'utf-8'));
 const emojis = JSON.parse(fs.readFileSync('./emojis.json', 'utf-8'));
@@ -52,12 +61,10 @@ const remote_server = {
     host: '150.230.169.222',
     port: 22,
     username: 'opc',
-}
-if (fs.existsSync("./private/ssh.key")) {
-    remote_server["privateKey"] = fs.readFileSync('./private/ssh.key');
+    privateKey: fs.readFileSync("./private/ssh.key"),
 }
 
-let jermaFiles: string[], jermaClips: any[];
+let jermaFiles: object[], jermaClips: any[];
 let scpClient: scp.ScpClient;
 
 // #region bigData
@@ -92,7 +99,7 @@ function sendTo(target : dc.Message | dc.TextBasedChannel, content : string, pin
         content = content.slice(0, 2000 - (length.toString().length + 12)) + ` + ${length} more...`
     }
     const replyObj = { content: content, allowedMentions: { repliedUser: (ping) } };
-    if (files.length[0]) replyObj["files"] = files;
+    if (files?.length !== 0) replyObj["files"] = files;
     
     if ((target as dc.Message).reply !== undefined) {
         return (target as dc.Message).reply(replyObj);
@@ -230,27 +237,17 @@ async function load() {
             _s[guild.id] = datas[0][1][guild.id];
 
             // uses the newDefaults array to grab keys
+            let tempObjs : object[];
             for (let i = 0; i < newDefaults.length; i++) {
-                const keys = newDefaults[i].split('/')
-                ///////////////////////////////////////////////////////////////////////////////////////eval method, might not work
-                // let soDeep = keys.join("']['");
-                // console.log("_s[guild.id]['" + soDeep + "'] = _s['default']['" + soDeep + "']");
-                // eval("_s[guild.id]['" + soDeep + "'] = _s['default']['" + soDeep + "']");
-                /////////////////////////////////////////////////////////////////////////////////////// generator
-                function* deepObj() {
-                    yield _s[guild.id][keys[0]];
+                tempObjs = [ _s[guild.id], _s.default ]
+                const keys = newDefaults[i].split('/');
+                let j: number = 0;
+                for (j = 0; j < keys.length - 1; j++) {
+                    // tempObjs = [ tempObjs[0][keys[j]], tempObjs[1][keys[j]] ];
+                    tempObjs.map(obj => obj[keys[j]]);
                 }
-                ////////////////////////////////////////////////////////////////////////////////////// switch case
-                // switch (keys.length) { // dude there's gotta be a better way to do this
-                //     case 1: _s[guild.id][keys[0]] = _s["default"][keys[0]];
-                //         break;
-                //     case 2: _s[guild.id][keys[0]][keys[1]] = _s["default"][keys[0]][keys[1]];
-                //         break;
-                //     case 3: _s[guild.id][keys[0]][keys[1]][keys[2]] = _s["default"][keys[0]][keys[1]][keys[2]];
-                //         break;
-                //     default: console.error(`${newDefaults[i]} is too deep/broken! help me!!!`)
-                //         break;
-                // }
+                console.log("\n---------------------------\n");
+                tempObjs[0][keys[j]] = tempObjs[1][keys[j]];
             }
         }
     })
@@ -312,15 +309,16 @@ class Param {
         this.name = name;
         this.desc = desc;
         this.preset = preset;
+        this.type = typeof (type ?? preset)
     }
 }
 // #endregion classes
 
 const _s = {
     "default" : {
-        commands : {}, // really just for timeouts for now
+        commands: {}, // really just for timeouts for now
 
-        count : {
+        count: {
             channel : null,
             current: 0,      // the last number said that was correct
             prevNumber: 0,   // used to reset back to the last number if i messed up my code
@@ -328,7 +326,7 @@ const _s = {
             lastCounter: "", // used to check for duplicates
         },
         
-        chain : {
+        chain: {
             channel: null,
             current: "",     //
             chainLength: 0,  //
@@ -337,7 +335,7 @@ const _s = {
             autoChain: 0,    // the amount of messages in any channel to start a chain
         },
 
-        convo : {
+        convo: {
             convoChannel: null, // the channel people are speaking in
             replyChannel: null, // the channel where you reply to the people speaking
         },
@@ -352,7 +350,11 @@ const _s = {
 };
 const _u = {
     "default" : {
-        silly: -1
+        silly: -1,
+        eco: {
+            bal: 0,
+            inv: [],
+        }
     }
 };
 
@@ -404,8 +406,8 @@ client.once(dc.Events.ClientReady, async c => {
 
 client.on(dc.Events.GuildCreate, guild => {
     console.log("Joined a new guild: " + guild.name);
-    _sGet(guild.id);
-})
+    void _sGet(guild.id);
+});
 
 client.on(dc.Events.MessageCreate, async (msg) => {
     // if (message.author.id !== "438296397452935169") return; // testing mode :)
@@ -562,7 +564,7 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
                         break;
                 }
             }
- 
+
             let i = 0; // less strict scope cuz i need to use it in the second loop
             let j = 0; // funny second iterator variable
             while (i < mathjs.min(com.params.length, tempParameters.length)) {
@@ -599,6 +601,7 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
                 } else {
                     const param = com.params[j];
                     paramObj[param.name] = convParam(tempParameters[i], param.type)
+                    console.log(com.params[j]);
                     j++;
                 }
                 i++;
@@ -739,23 +742,23 @@ const commands = {
     "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (msg: dc.Message<boolean>, p) {
         switch (p["fileType"]) {
             case 0: {
-                await sendTo(msg, "jerma 0 not working rn!! try again later. or just do \"$jerma 1\", that works");
-                return;
                 if (os.hostname() !== "hero-corp") {
                     await sendTo(msg, "sorry, jerma 0 only works on astrl's main pc. im being hosting from somewhere else rn")
                     return;
                 }
                 const reaction = msg.react('✅');
+                if (!scpClient) scpClient = await scp.Client(remote_server);
+                await scpClient.list('/home/opc/mediaHosting/jermaSFX/').then(x => x.forEach(x => debugLog(JSON.stringify(x))));
+                if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
+                const result = `./temp/${p["fileName"]}.mp3`;
+                const index = Math.round(Math.random() * jermaFiles.length - 1);
+                console.log(jermaFiles[index])
+                await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index]["name"]}`, result);
+                console.log("2")
+                await sendTo(msg.channel, "", true, [result]);
+                // await msg.channel.send({files: [result]});
+                fs.unlinkSync(result);
                 try {
-                    if (!scpClient) scpClient = await scp.Client(remote_server);
-                    debugLog(await scpClient.list('/home/opc/mediaHosting/jermaSFX/'));
-                    if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
-
-                    const result = `./temp/${p["fileName"]}.mp3`;
-                    const index = Math.round(Math.random() * jermaFiles.length - 1);
-                    await scpClient.downloadFile(`/home/opc/mediaHosting/jermaSFX/${jermaFiles[index]}`, result);
-                    await sendTo(msg.channel, "", true, [result]);
-                    fs.unlinkSync(result);
                 } catch (error) {
                     console.error(error);
                     await reaction;
@@ -1106,17 +1109,74 @@ const cmdCommands = {
 
     // keep this at the bottom, i just want easy access to it
     "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (msg: dc.Message<boolean>, p) {
-        let first = performance.now();
-        for (let i = 0; i < 5000; i++) {
-            newObj(_s["default"]);
+        // let first = performance.now();
+        // for (let i = 0; i < 5000; i++) {
+        //     newObj(_s["default"]);
+        // }
+        // let middle = performance.now();
+        // for (let i = 0; i < 5000; i++) {
+        //     structuredClone(_s["default"]);
+        // }
+        // let end = performance.now();
+        // await sendTo(msg, "JSON stringify + parse took " + ((middle - first)) + " milliseconds to complete");
+        // await sendTo(msg, "structuredClone took " + ((end - middle)) + " milliseconds to complete");
+
+        let testObj1 = {
+            "layer1str": "1",
+            "layer2": {
+                "layer2str": "2",
+                "layer3": {
+                    "layer3str": "3"
+                },
+            },
         }
-        let middle = performance.now();
-        for (let i = 0; i < 5000; i++) {
-            structuredClone(_s["default"]);
+
+        let testObj2 = {
+            "layer1str": "1",
+            "layer1str2": "2",
+            "layer2" : {
+                "layer2str": "3",
+                "layer2str2": "4",
+                "layer3" : {
+                    "layer3str": "5",
+                    "layer3str2": "6",
+                }
+            },
         }
-        let end = performance.now();
-        await sendTo(msg, "JSON stringify + parse took " + ((middle - first)) + " milliseconds to complete");
-        await sendTo(msg, "structuredClone took " + ((end - middle)) + " milliseconds to complete");
+
+        // let testObjKeysObj = {
+        //     "layer1str": "1",
+        //     "layer1str2": "2",
+        //     "layer2/layer2str": "3",
+        //     "layer2/layer2str2": "4",
+        //     "layer2/layer3/layer3str": "5",
+        //     "layer2/layer3/layer3str2": "6",
+        // }
+
+        // let keys = Object.keys(testObjKeysObj);
+        const overlaps = [
+            "layer1str2",
+            "layer2/layer2str2",
+            "layer2/layer3/layer3str2",
+        ]
+
+        // for (let i = 0; i < overlaps.length; i++) {
+        //     const keys = overlaps[i].split('/');
+
+        //     switch (keys.length) { // i hope there's a better way to do this
+        //         case 1: testObj1[keys[0]] = testObj2[keys[0]];
+        //             break;
+        //         case 2: testObj1[keys[0]][keys[1]] = testObj2[keys[0]][keys[1]];
+        //             break;
+        //         case 3: testObj1[keys[0]][keys[1]][keys[2]] = testObj2[keys[0]][keys[1]][keys[2]];
+        //             break;
+        //         default: console.error(`cries`)
+        //             break;
+        //     }
+        // }
+        
+
+        sendTo(msg, JSON.stringify(testObj1, null, '\t'));
     }, [
         new Param("lol", "use this for anything", ""),
         new Param("params", "how new and innovative!", 0)
