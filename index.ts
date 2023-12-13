@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import scp from 'node-scp';
 import dc from 'discord.js';
-import _ from 'underscore';
+import _ from 'lodash';
 // import brain from 'brain.js';
 // import neat from 'neataptic';
 import * as mathjs from 'mathjs';
@@ -27,7 +27,7 @@ const client = new dc.Client({ // create a new discord client instance
     intents: Array.from(getBigData().intents, (x : string) => dc.GatewayIntentBits[x])
 });
 
-const trustedUsers : string[] = [ // only add to this if you FULLY TRUST THEM
+const trustedUsers : ReadonlyArray<string> = [ // only add to this if you FULLY TRUST THEM
     "438296397452935169", // astrl (me)
     "820357014831628309", // @12u3ie
 ];
@@ -128,7 +128,9 @@ function newObj(obj : object) {
     return JSON.parse(JSON.stringify(obj));
 }
 
-function _sGet(target: any) {
+// both the below functions get the _s and _u objects respectively, and have some error checking for edge cases
+function _sGet(target: any) : typeof _s["default"]
+{
     let id = target;
     if (typeof target !== "string") {
         id = target?.guildId ?? target?.guild.id ?? target?.id;
@@ -144,8 +146,28 @@ function _sGet(target: any) {
     return _s[id];
 }
 
+function _uGet(target: any) : typeof _u["default"]
+{
+    let id = target;
+    if (typeof target !== "string") {
+        id = target?.author.id ?? target?.id;
+    }
+    if (typeof id !== "string") {
+        throw new Error("typeof " + typeof target + " not accepted into _uGet!");
+    }
+    if (!_u.hasOwnProperty(id)) {
+        console.warn("user with id " + id + " doesn't have a _u object! giving them one now.");
+        _u[id] = newObj(_u["default"]);
+    }
+    
+    return _u[id];
+}
+
 // converts from seconds to minutes, hours to ms, minutes to days, etc.
-function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Time.millisecond) {
+function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Time.millisecond) : number {
+    if (typeof time !== "number") {
+        time = Number(time);
+    }
     if (typeTo === typeFrom) return time;
 
     let modifier = 1;
@@ -156,6 +178,22 @@ function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Ti
     }
 
     return (typeFrom > typeTo) ? (time * modifier) : (time / modifier);
+}
+
+async function getChannel(msg : dc.Message, identifier: string, errCallback: () => Promise<any>) : Promise<dc.TextChannel> {
+    let channel : any = msg.channel;
+    if (identifier) {
+        try {
+            let check = (ch : dc.TextChannel) => ch.name.toLowerCase() === identifier.toLowerCase() || ch.id === identifier;
+            channel = msg.guild.channels.cache.find(check);
+        } catch (error) {
+            await errCallback();
+            return;
+        }
+    }
+    msg.react('✅');
+
+    return channel as dc.TextChannel;
 }
 
 // #endregion extension/help functions
@@ -186,11 +224,13 @@ async function save() {
 async function load() {
     if (!PERSIST) return;
     console.info("Start loading from JSON...");
-    const newDefaults : string[] = [];
     const before = performance.now();
-    const datas = [ [_s, {}], [_u, {}] ];
+    // const datas = [ [_s, {}, []], [_u, {}, []] ];
+    const objs = [ _s, _u ];
+    const datas = [ {}, {} ];
+    const newDefaults : string[][] = [ [], [] ];
     const pathKeys = [ "server", "user" ];
-    for (let i = 0; i < datas.length; i++) {
+    for (let i = 0; i < objs.length; i++) {
         console.info(`Start loading ${pathKeys[i]} object from JSON...`);
         let data : string = "";
         const path = PersistPaths[pathKeys[i]]
@@ -199,16 +239,16 @@ async function load() {
         }
 
         if (data) {
-            datas[i][1] = JSON.parse(data);
+            datas[i] = JSON.parse(data);
             console.info("The file was loaded!");
 
             function defaultCheck(obj : object, objAdd : object, root : string) {
                 Object.keys(obj).forEach(key => {
                     const value = obj[key];
                     const newKey = (root === "") ? (key) : (root + "/" + key);
-                    if (typeof value === typeof Object && value !== null) { // if it's an object, set up the root and iterate through it
+                    if (typeof value === "object" && value !== null) { // if it's an object, set up the root and iterate through it
                         defaultCheck(value, objAdd, newKey);
-                    } else {                                                // otherwise just add it to the object to check it
+                    } else {                                           // otherwise just add it to the object to check it
                         objAdd[newKey] = value;
                     }
                 });
@@ -216,36 +256,34 @@ async function load() {
 
             const dataCheck = {}; // the object that will get the paths for every key of the persist files
             const serverCheck = {}; // the object that will get the paths for every key of the persist object defaults
-            defaultCheck(datas[i][1]["default"], dataCheck,   "");
-            defaultCheck(datas[i][0]["default"], serverCheck, "");
+            defaultCheck(datas[i]["default"], dataCheck,   "");
+            defaultCheck(objs[i]["default"], serverCheck, "");
 
-            // const check1 = Object.keys(dataCheck);
-            // const check2 = Object.keys(serverCheck);
+            const check1 = Object.keys(dataCheck);
+            const check2 = Object.keys(serverCheck);
+            console.log(check1);
+            console.log(check2);
 
-            // const all    = _.union(check1, check2);
-            // const common = _.intersection(check1, check2);
-            // const answer = _.difference(all, common);
-            // debugLog(all)
-            // debugLog(common)
-            // debugLog(answer)
+            newDefaults[i] = _.xor(check1, check2);
+            console.log(newDefaults[i]);
         }
     }
 
     client.guilds.cache.forEach(guild => {
         let id = guild.id;
-        if (!datas[0][1].hasOwnProperty(id)) { // if there's no server object
+        if (!datas.hasOwnProperty(id)) { // if there's no server object
             console.info("Guild with id \"" + id + "\" set to default");
             // as long as things aren't undefined, a function, or a new Date(), this is a better way to do things (otherwise use structuredClone)
             _s[id] = newObj(_s["default"]);
         } else {                                 // if there is a server object
             console.info("LOADED guild with id \"" + id + "\"");
-            _s[id] = datas[0][1][id];
+            _s[id] = datas[id];
 
             // uses the newDefaults array to grab keys
             let tempObjs : object[];
-            for (let i = 0; i < newDefaults.length; i++) {
+            for (let i = 0; i < newDefaults[0].length; i++) {
                 tempObjs = [ _s[id], _s.default ];
-                const keys = newDefaults[i].split('/');
+                const keys = newDefaults[0][i].split('/');
                 let j: number = 0;
                 for (j = 0; j < keys.length - 1; j++) {
                     tempObjs.map(obj => obj[keys[j]]); // get the object of the previous object, and set each to each element
@@ -283,11 +321,12 @@ class Command {
     constructor(genre: string, desc: string, func : { (message: dc.Message<boolean>, p: object): Promise<void> }, params: Param[] = [], limitedTo : string[][] = [null,null,null], timeout = 0) {
         // checking for length is kinda lame so just make it null if it doesn't exist or if it's an empty array
         for (let i = 0; i < 2; i++) {
-            if (limitedTo[i]?.length) limitedTo[i] = null;
+            if (!limitedTo[i]?.length) limitedTo[i] = null;
         }
         this.genre = genre;
         this.desc = desc;
         this.func = func;
+        this.params = params;
         this.limitedTo = limitedTo;
         this.timeout = timeout;
         this.currentTimeout = 0;
@@ -295,10 +334,8 @@ class Command {
         // handle infParam stuff
         this.inf = params.find(x => x.name === "params");
         if (this.inf !== undefined) {
-            let index = params.indexOf(this.inf); 
-            this.params = params.splice(index, index); // removes just the inf params parameter
-        } else {
-            this.params = params;
+            let index = params.indexOf(this.inf);
+            this.params.splice(index, index); // removes just the inf params parameter
         }
     }
 }
@@ -315,6 +352,17 @@ class Param {
         this.type = typeof (type ?? preset)
     }
 }
+
+class Item {
+    name: string
+    desc: string
+    price: number
+    constructor(name: string, desc: string, price: number) {
+        this.name = name;
+        this.desc = desc;
+        this.price = price;
+    }
+}
 // #endregion classes
 
 const _s = {
@@ -322,7 +370,7 @@ const _s = {
         commands: {}, // really just for timeouts for now
 
         count: {
-            channel : null,
+            channel : null as dc.TextChannel,  // saved as an id, which the channel of is grabbed at load
             current: 0,      // the last number said that was correct
             prevNumber: 0,   // used to reset back to the last number if i messed up my code
             highestNum: 0,   // the highest number ever gotten to
@@ -330,25 +378,23 @@ const _s = {
         },
         
         chain: {
-            channel: null,
+            channel: null as dc.TextChannel,   // same thing as count.channel
             current: "",     //
-            chainLength: 0,  //
+            chainLength: 0,  // amount of times this phrase has been repeated
             prevChain: "",   // used to reset back to the last chain if i messed up my code
             lastChainer: "", // used to check for duplicates
             autoChain: 0,    // the amount of messages in any channel to start a chain
         },
 
         convo: {
-            convoChannel: null, // the channel people are speaking in
-            replyChannel: null, // the channel where you reply to the people speaking
+            convoChannel: null as dc.TextChannel, // the channel people are speaking in
+            replyChannel: null as dc.TextChannel, // the channel where you reply to the people speaking
         },
 
-        mwuah1: {
-            mwuah2: "hehehe",
-            mwuah3: {
-                mwuah4 : "hehehehe",
-            },
-        },
+        slowMode: {
+            channel: null as dc.TextChannel,
+            timer: 0,
+        }
     },
 };
 const _u = {
@@ -357,7 +403,8 @@ const _u = {
         eco: {
             bal: 0,
             inv: [],
-        }
+        },
+        slowMode: {},
     }
 };
 
@@ -366,37 +413,9 @@ process.on('SIGINT', async () => {
 });
 
 // #region counting/chain stuff
-async function resetNumber(message: dc.Message<boolean>, reply = 'empty. astrl screwed up lol', react = '💀') {
-    const count = _sGet(message).count;
-    if (count.currentNum > count.highestNum) count.highestNum = count.currentNum;
-    count.lastCounter = '';
-    count.prevNumber = count.currentNum;
-    count.currentNum = 0;
-    await message.react(react);
-    await sendTo(message, reply);
-}
 
-async function chainFunc(message: dc.Message<boolean>, inRow: string | number) {
-    debugLog("First " + inRow);
-    const chain = _sGet(message).chain;
-    if (!chain.currentChain) {
-        chain.currentChain = message.content.toLowerCase();
-        chain.chainAmount = 1;
-        return;
-    }
-    if (message.content.toLowerCase() === chain.currentChain && chain.lastChainer !== message.author.id) {
-        chain.chainAmount++;
-        if (chain.chainAmount >= inRow) await message.react('⛓️');
-    } else {
-        if (chain.chainAmount >= inRow) await message.react('💔');
-        chain.prevChain = chain.currentChain;
-        chain.currentChain = message.content.toLowerCase();
-        chain.chainAmount = 1;
-    }
-    chain.lastChainer = message.author.id;
-    debugLog(chain);
-    debugLog(inRow);
-}
+// recoding this rn
+
 // #endregion counting/chain stuff
 
 // #region client events
@@ -407,48 +426,47 @@ client.once(dc.Events.ClientReady, async c => {
     autoSave();
 });
 
-client.on(dc.Events.GuildCreate, guild => {
-    console.info("Joined a new guild: " + guild.name);
-    void _sGet(guild.id);
-});
+// probably not needed because as soon as a message is sent, _sGet() will be called.
+// the performace of newObj is negligible, im pretty sure it takes less than a microsecond
+// client.on(dc.Events.GuildCreate, guild => {
+//     console.info("Joined a new guild: " + guild.name);
+//     void _sGet(guild.id);
+// });
 
 client.on(dc.Events.MessageCreate, async (msg) => {
-    // if (message.author.id !== "438296397452935169") return; // testing mode :)
     if (msg.author.bot) return;
 
+    const s = _sGet(msg)
+    const u = _uGet(msg)
+    
+    // if (msg.author.id !== "438296397452935169") return; // testing mode :)
+
     const commandFromMessage = msg.content.split(' ')[0].substring(config.prefix.length);
-    const authorId = msg.author.id;
-
-    if (!_u.hasOwnProperty(authorId)) {
-        _u[authorId] = newObj(_u["default"]);
-    }
-
-    const userData = _u[authorId];
 
     // #region command handler
     if (msg.content.startsWith(config.prefix) && commands.hasOwnProperty(commandFromMessage)) {
         // 5% chance to happen, if this person is in sillyObj
-        if (((userData.silly === 0 && mathjs.random()) || userData.silly > 0)) {
-            switch (userData.silly) {
+        if (((u.silly === 0 && mathjs.random() > 0.95) || u.silly > 0)) {
+            switch (u.silly) {
                 case 0:
                     await sendTo(msg, "huh? speak up next time buddy.");
-                    userData.silly++;
+                    u.silly++;
                     return;
                 case 1:
                     if (msg.content === msg.content.toUpperCase()) {
-                        userData.silly = 0;
+                        u.silly = 0;
                     } else {
                         const replies : string[] = [
                             "SPEAK UP!!! CAN'T HEAR YOU!!!!",
                             "dude what did i JUST tell you. ugh.",
                             "*ALL*. *UPPERCASE*. OR ELSE I *CAN'T* HEAR YOU",
-                            "",
+                            "...",
                         ]
                         await sendTo(msg, replies[_.random(0, replies.length - 1)]);
                     }
                     return;
                 default:
-                    userData.silly = 0;
+                    u.silly = 0;
                     break;
             }
         }
@@ -457,55 +475,88 @@ client.on(dc.Events.MessageCreate, async (msg) => {
     }
     // #endregion
 
-    // #region counting and chain handler
-    const count = _sGet(msg).count;
+    // #region counting, chain, convo handler
+    const count = s.count, chain = s.chain, convo = s.convo, slowMode = s.slowMode;
 
-    if (msg.channel.id === count.channel?.id) {
-        let num = 0;
-        const content = String(wordsToNumbers(msg.content));
+    console.log(convo.replyChannel?.id);
+    switch (msg.channelId) {
+        case slowMode.channel?.id: {
+            let id = slowMode.channel.id;
+            if (u.slowMode.hasOwnProperty(id) || u.slowMode[id] === 0) {
+                u.slowMode[id] = s.slowMode.timer;
+            } else {
+                u.slowMode[id] = mathjs.min(s.slowMode.timer, u.slowMode[id]); // for if the timer gets changed at some point
+                await msg.author.send(new Date(u.slowMode[id] * 1000).toISOString().slice(11, -1) + " left on your slowmode clock.");
+                await msg.delete()
+            }
+        } break;
 
-        try {
-            num = mathjs.evaluate(content);
-        } catch (error) {
-            if (Number(content[0])) {
-                const chars : string[] = [];
-                let i = 0;
-                while (!isNaN(parseInt(content[i])) && i < 50) {
-                    chars.push(content[i]);
-                    i++;
+        case count.channel?.id: {
+            const content = String(wordsToNumbers(msg.content));
+            const newNumber = count.current + 1;
+            let msgNumber : number;
+            try {           // if the message is just an equation, evaluate it.
+                msgNumber = mathjs.evaluate(content);
+            } catch (err) { // else check each character up until it isn't a number, and grab
+                const numMatches = content.match(/\d+/g)?.map((x : string) => Number(x));
+                msgNumber = numMatches?.find(x => x === newNumber);
+
+                // if (!msgNumber) {
+                //
+                // }
+                
+                if (isNaN(msgNumber)) return; // lets people talk between counting, might be unwanted behaviour
+            }
+            if ((count.current + 1) === msgNumber && count.lastCounter !== msg.author.id) {
+                msg.react('✅')
+                count.current++;
+                count.lastCounter = msg.author.id;
+            } else {
+                // grabs the last two messages in the channel, and checks if they were made within 800 ms
+                const messages = _.takeRight(msg.channel.messages.cache.toJSON(), 2); 
+                if (800 < (messages[0].createdTimestamp - messages[1].createdTimestamp)) {
+                    sendTo(msg, `ooo... shoulda calmed down a bit!`)
+                } else {
+                    sendTo(msg, `heads up, ${count.current + 1} is actually ${count.current} + 1!! crazy.`)
                 }
-                num = mathjs.evaluate(chars.join(''));
-            } else return;
-        }
-        
-        if (count.lastCounter === authorId) {
-            resetNumber(msg, "uhhh... you know you can't count twice in a row, right??");
-            return;
-        }
+                
+                msg.react('❌')
+                count.current = 0;
+                count.lastCounter = "";
+            }
+        } break;
 
-        if (num === count.current + 1) {
-            msg.react('✅');
-            count.lastCounter = authorId;
-            count.current++;
-            debugLog("Count current : " + _sGet(msg).count.current);
-        } else {
-            resetNumber(msg, (count.prevNumber < 10) ?
-                "you can do better than THAT..." :
-                'you got pretty far. but i think you could definitely do better than ' + count.highestNum + '.'
-            );
-        }
-    } else if (msg.channel.id === _sGet(msg).chain.channel) {
-        await chainFunc(msg, 3);
-    } else if (_sGet(msg).chain.autoChain >= 0) {
-        //chainFunc(message, chain.autoChain);
+        case chain.channel?.id: {
+            let msgContent = msg.content;
+            // if it's the same message and not a duplicate, or it's a new chain (a.k.a it's been repeated less than 3 times)
+            if ((chain.current === msgContent.toLowerCase() && chain.lastChainer !== msg.author.id) || chain.chainLength < 3) {
+                if (chain.chainLength >= 3) {
+                    msg.react('⛓');
+                }
+                chain.current = msgContent.toLowerCase();
+                chain.lastChainer = msg.author.id;
+            } else {
+                sendTo(msg, "is it really that hard to copy and paste the last message..???")
+                msg.react('❌')
+                chain.current = "";
+                chain.lastChainer = "";
+            }
+
+        } break;
+
+        case convo.convoChannel?.id: {
+            console.log("huhhhh");
+            await sendTo(convo.replyChannel, `${msg.author.displayName}[:](${msg.url})`);
+        } break;
+
+        case convo.replyChannel?.id: {
+            await sendTo(convo.convoChannel, msg.content);
+        } break;
+            
+        // default:
+        //     break;
     }
-    if (_sGet(msg).convo.convoChannel?.id === msg.channel.id) {
-        const replyChannel = _sGet(msg).convo.replyChannel;
-        await sendTo(replyChannel, `${msg.author.displayName}[:](${msg.url})`);
-    } else if (_sGet(msg).convo.replyChannel?.id === msg.channel.id) {
-        await sendTo(_sGet(msg).convo.convoChannel, msg.content);
-    }
-    // #endregion
+    // #endregion counting, chain, convo handler
 });
 // #endregion client events
 
@@ -521,8 +572,8 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
     const permissions : string[] = msg.member.permissions.toArray();
 
     const trusted : boolean = trustedUsers.includes(msg.author.id);
-    const notLimited : boolean = com.limitedTo[0] == null || com.limitedTo[0]?.includes(msg.author.id);
-    const hasPerms : boolean = (_.intersection(com.limitedTo[1], permissions)).length > 0;
+    const notLimited : boolean = com.limitedTo[0] === null || com.limitedTo[0]?.includes(msg.author.id);
+    const hasPerms : boolean = _.intersection(com.limitedTo[1], permissions).length > 0;
 
     debugLog(msg.author.username + " -- trusted : " + trusted + ", notLimited : " + notLimited + ", hasPerms : " + hasPerms);
 
@@ -545,9 +596,9 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
             
             if (content.indexOf('"') > -1) {
                 const quoteSplit = content.split('"');
-                for (let i = 0; i < quoteSplit.length; i++) { 
+                for (let i = 1; i < quoteSplit.length; i += 2) { 
                     // check every other section (they will always be in double quotes) and check if it actually has spaces needed to be replaced
-                    if (i % 2 === 1 && quoteSplit[i].indexOf(' ') > -1) {
+                    if (quoteSplit[i].indexOf(' ') > -1) {
                         quoteSplit[i] = quoteSplit[i].split(' ').join(space); // most reliable way to replace all spaces with the temporary space character
                     }
                 }
@@ -665,7 +716,7 @@ function listCommands(commandObj : object, listDescs : boolean = false, singleCo
     }
 
     // #region new stuff
-    const pages : string[][] = [];
+    const pages : string[][] = [[]];
     let page : number = 0;
     let pageLength : number = 0;
     for (let i = 0; i < response.length; i++) {
@@ -673,6 +724,7 @@ function listCommands(commandObj : object, listDescs : boolean = false, singleCo
         if (pageLength > 2000) {
             pageLength = 0;
             page++;
+            pages[page] = [];
         }
         pages[page].push(response[i]);
     }
@@ -687,8 +739,10 @@ const genres = {};
 // it isn't persistent, so data like the help command will get regenerated (good for if a new command is added/modified)
 const commandData = {};
 const commands = {
-    "help" : new Command("bot/support", "lists all commands", async function (msg: dc.Message<boolean>, p) {
+    "help" : new Command("bot/support", "lists all commands", async function (msg, p) {
+        const before = performance.now();
         const reply = listCommands(commands, p["paramDescs"], p["whichCommand"]);
+        console.log(performance.now() - before)
         await sendTo(msg, reply);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
@@ -696,7 +750,7 @@ const commands = {
     ]),
 
     // #region novelty
-    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (msg: dc.Message<boolean>, p) {
+    "echo" : new Command("general/fun", "echoes whatever's in front of it", async function (msg, p) {
         try {
             await sleep(p["waitValue"], findTime(p["waitType"]));
             await sendTo(msg.channel, p["reply"]);
@@ -711,7 +765,7 @@ const commands = {
         new Param("delete", "deletes message after sending", false),
     ]),
 
-    "math" : new Command("general/fun", "does the math put in front of it", async function (msg: dc.Message<boolean>, p) {
+    "math" : new Command("general/fun", "does the math put in front of it", async function (msg, p) {
         try {
             await sendTo(msg, mathjs.evaluate(p["equation"]));
         } catch (error) {
@@ -721,7 +775,7 @@ const commands = {
         new Param("equation", "the equation to be evaluated", "undefined"),
     ]),
 
-    "mathClass" : new Command("general/fun", "this is for school lol", async function (msg: dc.Message<boolean>, p) {
+    "mathClass" : new Command("general/fun", "this is for school lol", async function (msg, p) {
         const feet = [];
         const inches = [];
         for (let i = 0; i < p["params"].length; i++) {
@@ -739,13 +793,13 @@ const commands = {
         new Param("params", "the numbers to use in the math", "undefined"),
     ]),
 
-    "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (msg: dc.Message<boolean>, p) {
+    "jerma" : new Command("general/fun", "Okay, if I... if I chop you up in a meat grinder, and the only thing that comes out, that's left of you, is your eyeball, you'r- you're PROBABLY DEAD!", async function (msg, p) {
         switch (p["fileType"]) {
             case 0: {
                 const reaction = msg.react('✅');
                 try {
                     if (!scpClient) scpClient = await scp.Client(remote_server);
-                    await scpClient.list('/home/opc/mediaHosting/jermaSFX/').then(x => x.forEach(x => debugLog(JSON.stringify(x))));
+                    await scpClient.list('/home/opc/mediaHosting/jermaSFX/').then(x => x.forEach((x: any) => debugLog(JSON.stringify(x))));
                     if (!jermaFiles) jermaFiles = await scpClient.list('/home/opc/mediaHosting/jermaSFX/');
                     const result = `./temp/${p["fileName"]}.mp3`;
                     const index = Math.round(Math.random() * jermaFiles.length - 1);
@@ -784,7 +838,7 @@ const commands = {
         new Param("fileName", "the name of the resulting file", "jerma so silly"),
     ]),
 
-    "convertTime" : new Command("hidden", "converts time", async function(msg: dc.Message<boolean>, p) {
+    "convertTime" : new Command("hidden", "converts time", async function(msg, p) {
         const newTime = convertTime(p["time"], p["typeFrom"], p["typeTo"]);
         await sendTo(msg, (`${p["time"]} ${p["typeFrom"]} is ${newTime} ${p["typeTo"]}`));
     }, [
@@ -795,32 +849,40 @@ const commands = {
     // #endregion novelty
 
     // #region reactions
-    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (msg: dc.Message<boolean>, p) {
-        async function getMessage() {
-            const messages = await msg.channel.messages.fetch({ limit: 2 });
-            const lastMessage = messages.last() ?? await getMessage();
-            return lastMessage;
-        }
-
-        const reference = p["reply"] !== "" ? msg : await (msg.reference !== null ? msg.fetchReference() : getMessage());
-        const toMock    = p["reply"] !== "" ? p["reply"] : reference.content;
+    "mock" : new Command("general/fun", "mocks text/whoever you reply to", async function (msg, p) {
+        const reference = await (msg.reference !== null ? msg.fetchReference() : _.last(msg.channel.messages.cache.toJSON()));
+        const toMock : string = reference.content;
 
         const mock = [];
         for (let i = 0; i < toMock.length; i++) {
-            const vary = i % 2 === 0;
-            mock.push(vary ? toMock[i].toLowerCase() : toMock[i].toUpperCase());
+            mock.push(i % 2 === 0 ? toMock[i].toLowerCase() : toMock[i].toUpperCase());
         }
         
-        await sendTo(p["reply"] === "" ? reference : reference.channel, mock.join(''));
+        await sendTo(reference, mock.join(''));
 
         await msg.delete();
     }, [
-        new Param("reply", "the message to mock", ""),
-        new Param("variance", "the amount of variance in the mocking (INITIALIZATION ONLY)", 0),
+        new Param("delete", "delete your message after sending it", true),
         new Param("message", "the message id to mock", ""),
     ]),
 
-    "true" : new Command("general/fun", emojis.true, async function (msg: dc.Message<boolean>, p) {
+    "mockSelf" : new Command("general/fun", "mocks text/whoever you reply to", async function (msg, p) {
+        const toMock : string = p["mock"];
+        const mock = [];
+        for (let i = 0; i < toMock.length; i++) {
+            const vary = i % 2 === 0;
+            mock[i] = (vary ? toMock[i].toLowerCase() : toMock[i].toUpperCase());
+        }
+        
+        await sendTo(msg.channel, mock.join(''));
+
+        if (p["delete"]) await msg.delete();
+    }, [
+        new Param("mock", "the text to mock", ""),
+        new Param("delete", "delete your message after sending it", true)
+    ]),
+
+    "true" : new Command("general/fun", emojis.true, async function (msg, p) {
         let reference: dc.Message<boolean>;
         try {
             reference = await msg.fetchReference();
@@ -845,7 +907,7 @@ const commands = {
         new Param("amount", `the amount you agree with this statement (capped at ${getBigData().trueEmojis.length})`, getBigData().trueEmojis.length),
     ], [], 10000),
 
-    "false" : new Command("hidden", "<:false:1123469352826576916>", async function (msg: dc.Message<boolean>, p) {
+    "false" : new Command("hidden", "<:false:1123469352826576916>", async function (msg, p) {
         let reference: dc.Message<boolean>;
         try {
             reference = await msg.fetchReference();
@@ -871,32 +933,20 @@ const commands = {
     // #endregion reactions
 
     // #region count/chain stuff
-    "countChannel" : new Command("patterns/counting", "sets the current channel to be the channel used for counting", async function (msg: dc.Message<boolean>, p) {
-        let channel = msg.channel as dc.TextChannel;
-        if (p["channel"]) {
-            try {
-                channel = await client.channels.fetch(p["channel"]) as dc.TextChannel;
-            } catch (error) {
-                try {
-                    channel = msg.guild.channels.cache.find(channel => channel.name.toLowerCase() === p["channel"].toLowerCase()) as dc.TextChannel;
-                } catch (error) {
-                    await msg.react('❌');
-                    return;
-                }
-            }
-        }
+    "countChannel" : new Command("patterns/counting", "sets the current channel to be the channel used for counting", async function (msg, p) {
+        let channel = await getChannel(msg, p["channel"], async () => await msg.react('❌'))
         msg.react('✅');
         
-        const countChannel = _sGet(msg).count.channel;
-        const test = countChannel !== null && channel.id === countChannel.id;
-        await sendTo(channel, test ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
-        _sGet(msg).count.channel = test ? null : channel;
+        const count = _sGet(msg).count;
+        const newCountChannel = count.channel !== null && channel.id === count.channel.id;
+        await sendTo(channel, newCountChannel ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
+        count.channel = newCountChannel ? null : channel;
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [[ "438296397452935169" ]]),
 
-    "chainChannel" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (msg: dc.Message<boolean>, p) {
-        let channel = msg.channel as dc.TextChannel;
+    "chainChannel" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (msg, p) {
+        let channel = msg.channel;
         if (p["channel"]) {
             try {
                 channel = await client.channels.fetch(p["channel"]) as dc.TextChannel;
@@ -910,28 +960,22 @@ const commands = {
             }
         }
         msg.react('✅');
+        channel = channel as dc.TextChannel
 
-        if (channel.id === _sGet(channel).count.channel.id) {
-            await sendTo(channel, `counting in ${channel.name.toLowerCase()} has ceased.`);
-            _sGet(channel).count.channel = null;
+        const chain = _sGet(channel).chain;
+
+        if (channel.id === chain.channel.id) {
+            await sendTo(channel, `the chain in ${channel.name.toLowerCase()} has been eliminated.`);
+            chain.channel = null;
         } else {
-            await sendTo(channel, `alright, count in ${channel.name.toLowerCase()}!`);
-            _sGet(channel).count.channel = channel;
+            await sendTo(channel, `alright, chain in ${channel.name.toLowerCase()}!`);
+            chain.channel = channel;
         }
-
-        // old stuff here
-        const channelId = p["channel"] ? p["channel"] : msg.channel.id;
-        const isChannel = _sGet(msg).chain.channel === channelId;
-
-        _sGet(msg).chain.channel = isChannel ? "" : channelId;
-        channel = client.channels.cache.get(channelId) as dc.TextChannel;
-        await sendTo(channel, isChannel ? 'the chain in this channel has been eliminated.' : 'alright. start a chain then.')
-                .catch(async err => await sendTo(msg, err));
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [ [ "438296397452935169" ] ]),
 
-    "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (msg: dc.Message<boolean>, p) {
+    "autoChain" : new Command("patterns/chaining", "will let any channel start a chain", async function (msg, p) {
         _sGet(msg).chain.autoChain = p["howMany"];
         debugLog(_sGet(msg).chain.autoChain);
         await sendTo(msg, (`autoChain is now ${_sGet(msg).chain.autoChain}.`));
@@ -940,13 +984,27 @@ const commands = {
     ], [ [ "438296397452935169" ] ]),
     // #endregion count/chain
 
-    "slowMode" : new Command("server/channels", "artifically makes a slowmode, which means even admins can't get around it.", async function(msg, p){
-        await sendTo(msg, "wowza! you can manage channels. (no clue if this works so tell me if you can't. please)");
+    "slowMode" : new Command("server/channels", "artifically makes a slowmode, which means even admins can't get around it.", async function(msg, p) {
+        const slowMode = _sGet(msg).slowMode;
+        slowMode.channel = (p["channel"] ? msg.guild.channels.cache.get(p["channel"]) : msg.channel) as dc.TextChannel;
+        slowMode.timer = convertTime(p["time"], findTime(p["timeType"]))
+        console.log(msg.author.username + " should be able to manage channels. if they can't then shut it down!!!")
+        // await sendTo(msg, "wowza! you can manage channels. (no clue if this works so tell me if you can't. please)");
     }, [
-        new Param("params", "the channel ids affected", "")
+        new Param("time", "the amount of time", ""),
+        new Param("timeType", "the type of time", "s"),
+        new Param("channel", "the channel ids affected", "")
     ], [ [], [ "ManageChannels" ] ]),
 
-    "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (msg: dc.Message<boolean>, p) {
+    "test" : new Command("hidden", "a bit queer init", async function (msg, p) {
+        console.log(p["params"]);
+        sendTo(msg, p["params"].toString());
+    }, [
+        new Param("lol", "use this for anything", ""),
+        new Param("params", "how new and innovative!", 0)
+    ]),
+
+    "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (msg, p) {
         const cont = msg.content.substring(msg.content.indexOf(' ') + 1)
         await parseCommand(msg, cont, cont.split(' ')[0], cmdCommands);
     }, [], [ [ "438296397452935169" ] ]),
@@ -954,7 +1012,7 @@ const commands = {
 
 // for more internal purposes; really just for astrl lol
 const cmdCommands = {
-    "help" : new Command("bot/support", "lists all cmd commands", async function (msg: dc.Message<boolean>, p) {
+    "help" : new Command("bot/support", "lists all cmd commands", async function (msg, p) {
         const reply = listCommands(cmdCommands, p["paramDescs"], p["whichCommand"]);
         await sendTo(msg, (reply));
     }, [
@@ -962,17 +1020,17 @@ const cmdCommands = {
         new Param("whichCommand", "will return help for a specific command", ""),
     ]),
 
-    "resetCount" : new Command("patterns/counting", "resets the current count", async function (msg: dc.Message<boolean>, p) {
-        resetNumber(msg, 'reset the count!', '✅');
+    "resetCount" : new Command("patterns/counting", "resets the current count", async function (msg, p) {
+        // resetNumber(msg, 'reset the count!', '✅');
     }, []),
 
-    "debug" : new Command("bot", "turns on/off debug mode (basically just sends more messages into the console)", async function (msg: dc.Message<boolean>, p) {
+    "debug" : new Command("bot", "turns on/off debug mode (basically just sends more messages into the console)", async function (msg, p) {
         debugMode = !debugMode;
         await msg.react('✅');
     }),
 
     // #region messaging
-    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg: dc.Message<boolean>, p) {
+    "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg, p) {
         try {
             const guild = client.guilds.cache.get(p["guild"]);
             if (guild !== undefined) {
@@ -988,13 +1046,14 @@ const cmdCommands = {
         new Param("guild", "the channel id to send the message into", "1113913617608355992"), // cc guild id
     ]),
 
-    "convo" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg: dc.Message<boolean>, p) {
+    "convo" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg, p) {
         try {
             const guild : dc.Guild = client.guilds.cache.get(p["guild"]);
             if (guild !== undefined) {
                 const channel = guild.channels.cache.get(p["channel"]);
-                _sGet(msg).convo.convoChannel = channel
-                _sGet(msg).convo.replyChannel = msg.channel
+                const s = _sGet(msg);
+                s.convo.convoChannel = channel as dc.TextChannel;
+                s.convo.replyChannel = msg.channel as dc.TextChannel;
             }
         } catch (error) {
             await sendTo(msg, "dumbass\n"+error)
@@ -1005,13 +1064,13 @@ const cmdCommands = {
     ]),
     // #endregion messaging
 
-    "restart" : new Command("bot", "restarts the bot", async function (msg: dc.Message<boolean>, p) {
+    "restart" : new Command("bot", "restarts the bot", async function (msg, p) {
         await sendTo(msg.channel, 'bot is restarting');
         await save();
         await client.destroy();
     }),
 
-    "kill" : new Command("bot", "kills the bot", async function (msg: dc.Message<boolean>, p) {
+    "kill" : new Command("bot", "kills the bot", async function (msg, p) {
         await sendTo(msg.channel, 'bot is now dead 😢');
         await kill();
     }),
@@ -1020,7 +1079,7 @@ const cmdCommands = {
     "save" : new Command("bot", "saves the bot's data", async (m, p) => await save()),
     "load" : new Command("bot", "loads the bot's data", async (m, p) => await load()),
 
-    "eval" : new Command("general/fun", "runs javascript code from a string", async function (msg1: dc.Message<boolean>, p) {
+    "eval" : new Command("general/fun", "runs javascript code from a string", async function (msg1, p) {
         const cont = msg1.content;
         let reaction : Promise<dc.MessageReaction>;
         try {
@@ -1038,7 +1097,7 @@ const cmdCommands = {
         }
     }),
 
-    "evalReturn" : new Command("general/fun", "runs javascript code from a string", async function (msg1: dc.Message<boolean>, p) {
+    "evalReturn" : new Command("general/fun", "runs javascript code from a string", async function (msg1, p) {
         const cont = msg1.content;
         let reaction : Promise<dc.MessageReaction>;
         try {
@@ -1056,7 +1115,7 @@ const cmdCommands = {
         }
     }),
 
-    "didAnythingBreak?" : new Command("hidden", "just testing every command until something breaks", async function (msg: dc.Message<boolean>, p) {
+    "didAnythingBreak?" : new Command("hidden", "just testing every command until something breaks", async function (msg, p) {
         // this is silly and doesn't really work lol
         const keys = Object.keys(commands);
         for (let i = 0; i < keys.length; i++) {
@@ -1069,7 +1128,7 @@ const cmdCommands = {
         await sendTo(msg, "finished!");
     }),
 
-    "sanityCheck" : new Command("hidden", "do several checks on all the commands to make sure they're up to snuff", async function(msg: dc.Message<boolean>, p) {
+    "sanityCheck" : new Command("hidden", "do several checks on all the commands to make sure they're up to snuff", async function(msg, p) {
         const overlaps = [];
         const reply : string[] = []
         const keys = Object.keys(commands)
@@ -1082,9 +1141,6 @@ const cmdCommands = {
                     }
                 });
             });
-            if (params.find(x => x.name === "params") && params[params.length - 1].name !== "params") {
-                reply.push(keys[i] + " has its inf params parameter in the wrong place!");
-            }
         }
         reply.push(overlaps.length > 0 ?
             "overlaps:\n" + overlaps.join('\n') +"\nastrl u dumbass" : 
@@ -1097,75 +1153,9 @@ const cmdCommands = {
     // #endregion
 
     // keep this at the bottom, i just want easy access to it
-    "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (msg: dc.Message<boolean>, p) {
-        // let first = performance.now();
-        // for (let i = 0; i < 5000; i++) {
-        //     newObj(_s["default"]);
-        // }
-        // let middle = performance.now();
-        // for (let i = 0; i < 5000; i++) {
-        //     structuredClone(_s["default"]);
-        // }
-        // let end = performance.now();
-        // await sendTo(msg, "JSON stringify + parse took " + ((middle - first)) + " milliseconds to complete");
-        // await sendTo(msg, "structuredClone took " + ((end - middle)) + " milliseconds to complete");
-
-        let testObj1 = {
-            "layer1str": "1",
-            "layer2": {
-                "layer2str": "2",
-                "layer3": {
-                    "layer3str": "3"
-                },
-            },
-        }
-
-        let testObj2 = {
-            "layer1str": "1",
-            "layer1str2": "2",
-            "layer2" : {
-                "layer2str": "3",
-                "layer2str2": "4",
-                "layer3" : {
-                    "layer3str": "5",
-                    "layer3str2": "6",
-                }
-            },
-        }
-
-        // let testObjKeysObj = {
-        //     "layer1str": "1",
-        //     "layer1str2": "2",
-        //     "layer2/layer2str": "3",
-        //     "layer2/layer2str2": "4",
-        //     "layer2/layer3/layer3str": "5",
-        //     "layer2/layer3/layer3str2": "6",
-        // }
-
-        // let keys = Object.keys(testObjKeysObj);
-        const overlaps = [
-            "layer1str2",
-            "layer2/layer2str2",
-            "layer2/layer3/layer3str2",
-        ]
-
-        // for (let i = 0; i < overlaps.length; i++) {
-        //     const keys = overlaps[i].split('/');
-
-        //     switch (keys.length) { // i hope there's a better way to do this
-        //         case 1: testObj1[keys[0]] = testObj2[keys[0]];
-        //             break;
-        //         case 2: testObj1[keys[0]][keys[1]] = testObj2[keys[0]][keys[1]];
-        //             break;
-        //         case 3: testObj1[keys[0]][keys[1]][keys[2]] = testObj2[keys[0]][keys[1]][keys[2]];
-        //             break;
-        //         default: console.error(`cries`)
-        //             break;
-        //     }
-        // }
-        
-
-        sendTo(msg, JSON.stringify(testObj1, null, '\t'));
+    "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (msg, p) {
+        console.log(p["params"]);
+        sendTo(msg, p["params"].toString());
     }, [
         new Param("lol", "use this for anything", ""),
         new Param("params", "how new and innovative!", 0)
