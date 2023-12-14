@@ -42,10 +42,10 @@ enum PersistPaths
 
 enum Time
 {
-    millisecond = 0,
-    second,
-    minute,
-    hour,
+    ms = 0,
+    sec,
+    min,
+    hr,
     day,
     week,
 }
@@ -86,7 +86,7 @@ function getBigData() {
 
 function wipeBigData() {
     if (!bigDataTimeout) {
-        bigDataTimeout = setTimeout(() => { bigDataTemp = null; }, convertTime(10, Time.second));
+        bigDataTimeout = setTimeout(() => { bigDataTemp = null; }, convertTime(10, Time.sec));
     } else {
         bigDataTimeout = bigDataTimeout.refresh();
     }
@@ -164,7 +164,7 @@ function _uGet(target: any) : typeof _u["default"]
 }
 
 // converts from seconds to minutes, hours to ms, minutes to days, etc.
-function convertTime(time = 0, typeFrom : Time = Time.second, typeTo : Time = Time.millisecond) : number {
+function convertTime(time = 0, typeFrom : Time = Time.sec, typeTo : Time = Time.ms) : number {
     if (typeof time !== "number") {
         time = Number(time);
     }
@@ -200,7 +200,7 @@ async function getChannel(msg : dc.Message, identifier: string, errCallback: () 
 
 // #region save/load
 async function autoSave() {
-    await sleep(1, Time.minute);
+    await sleep(1, Time.min);
     console.info("Autosaving...");
     await save().catch(error => console.error("Autosave failed!\n" + error));
     autoSave();
@@ -261,23 +261,20 @@ async function load() {
 
             const check1 = Object.keys(dataCheck);
             const check2 = Object.keys(serverCheck);
-            console.log(check1);
-            console.log(check2);
 
             newDefaults[i] = _.xor(check1, check2);
-            console.log(newDefaults[i]);
         }
     }
 
     client.guilds.cache.forEach(guild => {
         let id = guild.id;
-        if (!datas.hasOwnProperty(id)) { // if there's no server object
-            console.info("Guild with id \"" + id + "\" set to default");
+        if (!datas[0].hasOwnProperty(id)) { // if there's no server object
+            console.info(`Guild "${guild.name}" with id "${id}" set to default`);
             // as long as things aren't undefined, a function, or a new Date(), this is a better way to do things (otherwise use structuredClone)
             _s[id] = newObj(_s["default"]);
         } else {                                 // if there is a server object
-            console.info("LOADED guild with id \"" + id + "\"");
-            _s[id] = datas[id];
+            console.info(`LOADED guild "${guild.name}" with id "${id}"`);
+            _s[id] = datas[0][id];
 
             // uses the newDefaults array to grab keys
             let tempObjs : object[];
@@ -296,8 +293,8 @@ async function load() {
 }
 // #endregion save/load
 
-async function sleep(time : number, convert : Time = Time.millisecond) : Promise<void> {
-    if (convert !== Time.millisecond) time = convertTime(time, convert, Time.millisecond) // always wanna keep it milliseconds
+async function sleep(time : number, convert : Time = Time.ms) : Promise<void> {
+    if (convert !== Time.ms) time = convertTime(time, convert, Time.ms) // always wanna keep it milliseconds
     debugLog("sleep for " + time + " milliseconds")
     return new Promise<void>((resolve) => setTimeout(resolve, time));
 }
@@ -478,7 +475,7 @@ client.on(dc.Events.MessageCreate, async (msg) => {
     // #region counting, chain, convo handler
     const count = s.count, chain = s.chain, convo = s.convo, slowMode = s.slowMode;
 
-    console.log(convo.replyChannel?.id);
+    console.log(convo.convoChannel?.id);
     switch (msg.channelId) {
         case slowMode.channel?.id: {
             let id = slowMode.channel.id;
@@ -516,8 +513,10 @@ client.on(dc.Events.MessageCreate, async (msg) => {
                 const messages = _.takeRight(msg.channel.messages.cache.toJSON(), 2); 
                 if (800 < (messages[0].createdTimestamp - messages[1].createdTimestamp)) {
                     sendTo(msg, `ooo... shoulda calmed down a bit!`)
+                } else if (messages[0].author.id === messages[1].author.id) {
+                    sendTo(msg, `do you really think you can count twice in a row..?`)
                 } else {
-                    sendTo(msg, `heads up, ${count.current + 1} is actually ${count.current} + 1!! crazy.`)
+                    sendTo(msg, `heads up, ${newNumber} is actually ${count.current} + 1!! crazy.`)
                 }
                 
                 msg.react('❌')
@@ -556,6 +555,10 @@ client.on(dc.Events.MessageCreate, async (msg) => {
         // default:
         //     break;
     }
+
+    if (chain.autoChain > 0) {
+
+    }
     // #endregion counting, chain, convo handler
 });
 // #endregion client events
@@ -584,7 +587,7 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
             const timeToWait = com.currentTimeout - dateNow;
             const timeToWaitReply = timeToWait < 1000 ? timeToWait + " milliseconds" : mathjs.round(timeToWait / 1000) + " seconds";
             const timeoutReply = await sendTo(msg, "gotta wait " + timeToWaitReply + ". lol.");
-            await sleep(mathjs.min(timeToWait, convertTime(5, Time.second, Time.millisecond))); // hurrah for convertTime()
+            await sleep(mathjs.min(timeToWait, convertTime(5, Time.sec, Time.ms))); // hurrah for convertTime()
             timeoutReply.delete();
             return com;
         }
@@ -742,7 +745,7 @@ const commands = {
     "help" : new Command("bot/support", "lists all commands", async function (msg, p) {
         const before = performance.now();
         const reply = listCommands(commands, p["paramDescs"], p["whichCommand"]);
-        console.log(performance.now() - before)
+        debugLog(performance.now() - before)
         await sendTo(msg, reply);
     }, [
         new Param("paramDescs", "include parameter descriptions", false),
@@ -938,39 +941,22 @@ const commands = {
         msg.react('✅');
         
         const count = _sGet(msg).count;
-        const newCountChannel = count.channel !== null && channel.id === count.channel.id;
-        await sendTo(channel, newCountChannel ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
+        const newCountChannel = count.channel !== null && channel.id === count.channel?.id;
+        await sendTo(msg.channel, newCountChannel ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
         count.channel = newCountChannel ? null : channel;
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [[ "438296397452935169" ]]),
 
     "chainChannel" : new Command("patterns/chaining", "sets the current channel to be the channel used for message chains", async function (msg, p) {
-        let channel = msg.channel;
-        if (p["channel"]) {
-            try {
-                channel = await client.channels.fetch(p["channel"]) as dc.TextChannel;
-            } catch (error) {
-                try {
-                    channel = msg.guild.channels.cache.find(channel => channel.name.toLowerCase() === p["channel"].toLowerCase()) as dc.TextChannel;
-                } catch (error) {
-                    await msg.react('❌');
-                    return;
-                }
-            }
-        }
+        let channel = await getChannel(msg, p["channel"], async () => await msg.react('❌'))
         msg.react('✅');
         channel = channel as dc.TextChannel
-
-        const chain = _sGet(channel).chain;
-
-        if (channel.id === chain.channel.id) {
-            await sendTo(channel, `the chain in ${channel.name.toLowerCase()} has been eliminated.`);
-            chain.channel = null;
-        } else {
-            await sendTo(channel, `alright, chain in ${channel.name.toLowerCase()}!`);
-            chain.channel = channel;
-        }
+        
+        const chain = _sGet(msg).count;
+        const newChainChannel = chain.channel !== null && channel.id === chain.channel?.id;
+        await sendTo(msg.channel, newChainChannel ? `counting in ${channel.name.toLowerCase()} has ceased.` : `alright, count in ${channel.name.toLowerCase()}!`);
+        chain.channel = newChainChannel ? null : channel;
     }, [
         new Param("channel", "the specific channel to start counting in", "")
     ], [ [ "438296397452935169" ] ]),
@@ -988,7 +974,7 @@ const commands = {
         const slowMode = _sGet(msg).slowMode;
         slowMode.channel = (p["channel"] ? msg.guild.channels.cache.get(p["channel"]) : msg.channel) as dc.TextChannel;
         slowMode.timer = convertTime(p["time"], findTime(p["timeType"]))
-        console.log(msg.author.username + " should be able to manage channels. if they can't then shut it down!!!")
+        debugLog(msg.author.username + " should be able to manage channels. if they can't then shut it down!!!")
         // await sendTo(msg, "wowza! you can manage channels. (no clue if this works so tell me if you can't. please)");
     }, [
         new Param("time", "the amount of time", ""),
@@ -997,7 +983,7 @@ const commands = {
     ], [ [], [ "ManageChannels" ] ]),
 
     "test" : new Command("hidden", "a bit queer init", async function (msg, p) {
-        console.log(p["params"]);
+        debugLog(p["params"]);
         sendTo(msg, p["params"].toString());
     }, [
         new Param("lol", "use this for anything", ""),
@@ -1006,6 +992,7 @@ const commands = {
 
     "cmd" : new Command("hidden", "astrl only!! internal commands that would be dangerous to let everybody use", async function (msg, p) {
         const cont = msg.content.substring(msg.content.indexOf(' ') + 1)
+        debugLog("cont : " + cont);
         await parseCommand(msg, cont, cont.split(' ')[0], cmdCommands);
     }, [], [ [ "438296397452935169" ] ]),
 }
@@ -1028,6 +1015,17 @@ const cmdCommands = {
         debugMode = !debugMode;
         await msg.react('✅');
     }),
+
+    // keep this at the bottom, i just want easy access to it
+    "invite" : new Command("bot", "make an invite using an id", async function (msg, p) {
+        await (client.guilds.cache.get(p["id"]).channels.cache.filter(x => x.isTextBased()).first() as dc.TextChannel)
+            .createInvite({ maxAge: 0, maxUses: 0 })
+            .then(async (invite) => {
+                sendTo(msg, invite.url);
+            })
+    }, [
+        new Param("id", ":)", ""),
+    ]),
 
     // #region messaging
     "send" : new Command("bot", "sends a message from The Caretaker into a specific guild/channel", async function (msg, p) {
@@ -1054,6 +1052,7 @@ const cmdCommands = {
                 const s = _sGet(msg);
                 s.convo.convoChannel = channel as dc.TextChannel;
                 s.convo.replyChannel = msg.channel as dc.TextChannel;
+                sendTo(msg, s.convo.convoChannel.id);
             }
         } catch (error) {
             await sendTo(msg, "dumbass\n"+error)
@@ -1120,9 +1119,9 @@ const cmdCommands = {
         const keys = Object.keys(commands);
         for (let i = 0; i < keys.length; i++) {
             await sendTo(msg, ("testing command " + keys[i]))
-            await sleep(1, Time.second);
+            await sleep(1, Time.sec);
             await parseCommand(msg, (config.prefix + keys[i]), keys[i], commands);
-            await sleep(1, Time.second);
+            await sleep(1, Time.sec);
         }
 
         await sendTo(msg, "finished!");
@@ -1154,8 +1153,11 @@ const cmdCommands = {
 
     // keep this at the bottom, i just want easy access to it
     "test" : new Command("bot", "various things astrl will put in here to test node.js/discord.js", async function (msg, p) {
-        console.log(p["params"]);
-        sendTo(msg, p["params"].toString());
+        await (client.guilds.cache.get("1161802658991046656").channels.cache.filter(x => x.isTextBased()).first() as dc.TextChannel)
+            .createInvite({ maxAge: 0, maxUses: 0 })
+            .then(async (invite) => {
+                sendTo(msg, invite.url);
+            })
     }, [
         new Param("lol", "use this for anything", ""),
         new Param("params", "how new and innovative!", 0)
