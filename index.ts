@@ -654,7 +654,9 @@ async function parseCommand(msg: dc.Message<boolean>, content: string, command: 
                 for (let i = 1; i < quoteSplit.length; i += 2) { 
                     // check every other section (they will always be in double quotes) and check if it actually has spaces needed to be replaced
                     if (quoteSplit[i].indexOf(' ') > -1) {
+                        let before = performance.now();
                         quoteSplit[i] = quoteSplit[i].split(' ').join(space); // most reliable way to replace all spaces with the temporary space character
+                        console.log(`took ${performance.now() - before} ms`)
                     }
                 }
                 tempParameters = quoteSplit.join('').split(' '); // join everything back together then split it up as parameters
